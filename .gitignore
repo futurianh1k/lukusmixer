@@ -1,0 +1,110 @@
+# ──────────────────────────────────────────────
+# Python
+# ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# ──────────────────────────────────────────────
+# 가상환경 / 패키지
+# ──────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+.env.*
+
+# ──────────────────────────────────────────────
+# Node.js / Frontend
+# ──────────────────────────────────────────────
+node_modules/
+lukus-mixer/frontend/node_modules/
+lukus-mixer/frontend/dist/
+lukus-mixer/frontend/.vite/
+.npm/
+.pnpm-store/
+
+# ──────────────────────────────────────────────
+# 오디오 / 미디어 파일 (용량이 크므로 제외)
+# ──────────────────────────────────────────────
+*.mp3
+*.wav
+*.flac
+*.ogg
+*.m4a
+*.mp4
+*.aac
+
+# ──────────────────────────────────────────────
+# 임시 파일 / 출력물 / 로그
+# ──────────────────────────────────────────────
+*.log
+*.tmp
+*.temp
+/tmp/
+/outputs/
+lukus-mixer/output/
+
+# ──────────────────────────────────────────────
+# IDE / OS
+# ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ──────────────────────────────────────────────
+# Jupyter
+# ──────────────────────────────────────────────
+.ipynb_checkpoints/
+/jupyter/
+
+# ──────────────────────────────────────────────
+# ML / 학습 관련
+# ──────────────────────────────────────────────
+/wandb/
+/datasets/
+/scripts/
+*.pth
+*.ckpt
+*.safetensors
+
+# ──────────────────────────────────────────────
+# SongGen 기존 제외 항목
+# ──────────────────────────────────────────────
+/songgen/processing_songgen_old.py
+/songgen/xcodec_wrapper/xcodec_infer/ckpts/general_more/xcodec_hubert_general_audio_v2.pth
+/songgen/xcodec_wrapper/xcodec_infer/ckpts/requirement.txt
+/songgen/modeling_songgen_dual_track_refaudio.py
+/songgen/modeling_songgen_mixed_refaudio.py
+/songgen/processing_songgen_norefaudio.py
+/training_huoshan_valid/
+/training/inference_multi_SongGen_2stage.py
+/training/run_songgen_training_dual_track_refaudio.py
+/training/run_songgen_training_mixed_refaudio.py
+/helpers/training_configs_valid_houshan/
+/helpers/push_to_hub_scripts/
+/helpers/training_configs/Debug_dual_train.json
+/helpers/training_configs/Debug_mixed_pro_train.json
+/helpers/training_configs/two_stage_L2V.json
+/helpers/training_configs/two_stage_V2A.json
+requirement.txt
+songgen.egg-info/
+
+# ──────────────────────────────────────────────
+# 보안: API 키, 시크릿, 자격증명
+# ──────────────────────────────────────────────
+*.pem
+*.key
+credentials.json
+secrets.json
+service-account*.json

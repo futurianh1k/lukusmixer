@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  @apply bg-dark-950 text-white;
+}
+
+/* 스크롤바 스타일링 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-dark-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-dark-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-dark-500;
+}
+
+/* 커스텀 애니메이션 */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(34, 197, 94, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(34, 197, 94, 0.8);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* 스템 체크박스 스타일 */
+.stem-checkbox {
+  @apply appearance-none w-5 h-5 rounded border-2 border-dark-500 bg-dark-800 
+         cursor-pointer transition-all duration-200;
+}
+
+.stem-checkbox:checked {
+  @apply bg-lukus-500 border-lukus-500;
+}
+
+.stem-checkbox:hover {
+  @apply border-lukus-400;
+}
+
+/* 프로그레스 바 */
+.progress-bar {
+  @apply h-1 bg-dark-700 rounded-full overflow-hidden;
+}
+
+.progress-bar-fill {
+  @apply h-full bg-gradient-to-r from-lukus-500 to-lukus-400 transition-all duration-300;
+}
+
+/* 파일 드롭존 */
+.dropzone {
+  @apply border-2 border-dashed border-dark-600 rounded-xl p-8 text-center
+         transition-all duration-200 cursor-pointer;
+}
+
+.dropzone:hover {
+  @apply border-lukus-500 bg-dark-900/50;
+}
+
+.dropzone.active {
+  @apply border-lukus-400 bg-lukus-500/10;
+}
+
+/* 오디오 플레이어 */
+.audio-player {
+  @apply bg-dark-800 rounded-lg p-4;
+}
+
+/* 타임 슬라이더 */
+.time-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.time-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s ease;
+}
+
+.time-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+.time-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+}
+
+/* 세로 볼륨 슬라이더 */
+.volume-slider-vertical {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 6px;
+  height: 80px;
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.volume-slider-vertical::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+}
+
+.volume-slider-vertical::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+}
+
+/* 스펙트로그램 컨테이너 */
+.spectrogram-container {
+  @apply bg-dark-900 rounded-lg overflow-hidden border border-dark-700;
+}
+
+.spectrogram-container img {
+  @apply w-full h-auto;
+}
+
+/* 버튼 스타일 */
+.btn-primary {
+  @apply px-6 py-3 bg-lukus-500 hover:bg-lukus-600 text-white font-semibold 
+         rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+.btn-secondary {
+  @apply px-4 py-2 bg-dark-700 hover:bg-dark-600 text-white 
+         rounded-lg transition-all duration-200;
+}
+
+/* 카드 스타일 */
+.card {
+  @apply bg-dark-900 rounded-xl border border-dark-700;
+}
+
+/* Stem 태그 */
+.stem-tag {
+  @apply px-3 py-1.5 rounded-full text-sm font-medium cursor-pointer
+         transition-all duration-200 select-none;
+}
+
+.stem-tag.selected {
+  @apply ring-2 ring-offset-2 ring-offset-dark-900;
+}
