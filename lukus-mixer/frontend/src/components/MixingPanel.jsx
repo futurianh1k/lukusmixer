@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Mic2, Drum, Guitar, Piano, Waves, Music, Volume2, VolumeX, Play, Loader2, Download, Plus, Trash2, Save, History, X, Clock } from 'lucide-react';
+import { Mic2, Drum, Guitar, Piano, Waves, Music, Volume2, VolumeX, Play, Loader2, Download, Plus, Trash2, Save, History, X, Clock, Maximize2 } from 'lucide-react';
 import AudioPlayer from './AudioPlayer';
 import axios from 'axios';
 
@@ -15,15 +15,19 @@ const STEM_CONFIG = {
 };
 
 const VOLUME_PRESETS = [
+  { label: '최대 (+12dB)',     db: 12 },
+  { label: '매우 크게 (+9dB)', db: 9 },
   { label: '크게 (+6dB)',      db: 6 },
   { label: '조금 크게 (+3dB)', db: 3 },
   { label: '원본 (0dB)',       db: 0 },
   { label: '조금 작게 (-3dB)', db: -3 },
   { label: '작게 (-6dB)',      db: -6 },
+  { label: '매우 작게 (-9dB)', db: -9 },
+  { label: '최소 (-12dB)',     db: -12 },
   { label: '음소거',           db: -100 },
 ];
 
-function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilename }) {
+function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilename, externalPromptAppend, onExpandMixResult }) {
   const [selectedInstrument, setSelectedInstrument] = useState('');
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(15);
@@ -38,6 +42,14 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
   const [showHistory, setShowHistory] = useState(false);
   const [historyItems, setHistoryItems] = useState([]);
   const [savingPrompt, setSavingPrompt] = useState(false);
+  const [lastAppendId, setLastAppendId] = useState(0);
+
+  useEffect(() => {
+    if (externalPromptAppend && externalPromptAppend.id !== lastAppendId) {
+      setPrompt(prev => prev ? prev + '\n' + externalPromptAppend.text : externalPromptAppend.text);
+      setLastAppendId(externalPromptAppend.id);
+    }
+  }, [externalPromptAppend, lastAppendId]);
 
   const availableStems = useMemo(() => {
     return results ? Object.keys(results) : [];
@@ -281,12 +293,12 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
         {/* 볼륨 프리셋 */}
         <div className="mb-3">
           <label className="text-xs text-dark-400 mb-1 block">볼륨 조절</label>
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-3 gap-1">
             {VOLUME_PRESETS.map(p => (
               <button
                 key={p.db}
                 onClick={() => setVolumePreset(p.db)}
-                className={`px-2 py-1.5 rounded text-xs font-medium transition-all
+                className={`px-1.5 py-1 rounded text-[11px] font-medium transition-all
                   ${volumePreset === p.db
                     ? p.db <= -100
                       ? 'bg-red-500/30 text-red-400 ring-1 ring-red-500/50'
@@ -298,7 +310,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
                     : 'bg-dark-900 text-dark-400 hover:bg-dark-700'
                   }`}
               >
-                {p.db <= -100 ? <VolumeX className="w-3 h-3 inline mr-1" /> : null}
+                {p.db <= -100 ? <VolumeX className="w-3 h-3 inline mr-0.5" /> : null}
                 {p.label}
               </button>
             ))}
@@ -493,9 +505,24 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
       {/* 믹싱 결과 플레이어 */}
       {mixResult && (
         <div>
-          <h3 className="text-xs font-semibold text-dark-400 uppercase tracking-wider mb-2">
-            믹싱 결과
-          </h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-dark-400 uppercase tracking-wider">
+              믹싱 결과
+            </h3>
+            <button
+              onClick={() => onExpandMixResult && onExpandMixResult({
+                url: mixResult,
+                title: 'Mixed Result',
+                duration,
+                jobId,
+                mixId,
+              })}
+              className="p-1 rounded hover:bg-dark-700 text-dark-500 hover:text-orange-400 transition-colors"
+              title="중앙 패널에 확대 표시"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <AudioPlayer
             url={mixResult}
             title="Mixed Result"

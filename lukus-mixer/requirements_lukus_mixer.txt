@@ -1,0 +1,57 @@
+# ═══════════════════════════════════════════════════
+# LUKUS Music Mixer — Python 패키지 목록
+# ═══════════════════════════════════════════════════
+# 생성일: 2026-03-06
+# Python: 3.13.11 (miniconda3 base)
+# GPU: NVIDIA RTX 3070 (8GB), CUDA 12.8
+#
+# 설치:
+#   pip install -r requirements_lukus_mixer.txt
+#
+# PyTorch + CUDA는 별도 설치 필요 (아래 주석 참고)
+# ═══════════════════════════════════════════════════
+
+# ── 웹 프레임워크 ──
+fastapi==0.135.1
+uvicorn[standard]==0.41.0
+python-multipart==0.0.22
+pydantic==2.12.4
+pydantic-settings==2.12.0
+
+# ── AI 엔진: STEM 분리 ──
+demucs==4.0.1
+audio-separator[gpu]==0.41.1
+
+# ── PyTorch + CUDA (별도 설치 필요) ──
+# 아래 명령으로 CUDA 12.8 버전 설치:
+#   pip install torch==2.10.0 torchaudio==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu128
+# CPU만 사용 시:
+#   pip install torch==2.10.0 torchaudio==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
+torch==2.10.0
+torchaudio==2.10.0
+torchvision==0.25.0
+
+# ── ONNX Runtime (audio-separator GPU 추론용) ──
+onnxruntime-gpu==1.24.3
+onnx2torch-py313==1.6.0
+
+# ── 오디오 처리 ──
+librosa==0.11.0
+pydub==0.25.1
+soundfile==0.13.1
+audioread==3.1.0
+soxr==1.0.0
+samplerate==0.1.0
+resampy==0.4.3
+
+# ── 스펙트로그램 시각화 ──
+matplotlib==3.10.8
+
+# ── 수치 연산 ──
+numpy==2.4.2
+scipy==1.17.1
+
+# ── audio-separator 의존성 ──
+diffq==0.2.4
+rotary-embedding-torch==0.6.5
+beartype==0.18.5

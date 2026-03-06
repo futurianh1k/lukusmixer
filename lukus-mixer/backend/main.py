@@ -80,6 +80,7 @@ class JobStatus(BaseModel):
 class SystemInfo(BaseModel):
     cuda_available: bool
     demucs_available: bool
+    audio_separator_available: bool = False
     models: List[dict]
 
 
@@ -98,8 +99,15 @@ async def get_system_info():
     return SystemInfo(
         cuda_available=demucs_service.cuda_available,
         demucs_available=demucs_service.demucs_available,
+        audio_separator_available=demucs_service.audio_separator_available,
         models=[
-            {"id": k, "name": v["name"], "stems": v["stems"]}
+            {
+                "id": k,
+                "name": v["name"],
+                "stems": v["stems"],
+                "description": v.get("description", ""),
+                "engine": v.get("engine", "demucs"),
+            }
             for k, v in DEMUCS_MODELS.items()
         ]
     )
@@ -224,18 +232,26 @@ async def process_split_job(
         except Exception as e:
             print(f"⚠️ 원본 스펙트로그램 실패: {e}")
 
-        # Demucs 실행
+        # STEM 분리 실행
+        engine = DEMUCS_MODELS.get(model, {}).get("engine", "demucs")
+        engine_label = "BS-RoFormer + Demucs 체이닝" if engine == "chained" else f"Demucs ({model})"
         _update_job(job_id, progress=20, message="AI 처리 중...",
-                    log="Demucs AI 처리 시작...")
-        
+                    log=f"{engine_label} AI 처리 시작...")
+
+        def _progress_log(msg):
+            _update_job(job_id, log=msg)
+
         stem_paths = await asyncio.to_thread(
             demucs_service.separate,
             audio_path,
-            model
+            model,
+            None,
+            True,
+            _progress_log,
         )
-        
+
         _update_job(job_id, progress=80, message="분리 완료, 스펙트로그램 생성 중...",
-                    log=f"Demucs 완료 → {len(stem_paths)}개 스템 검출")
+                    log=f"{engine_label} 완료 → {len(stem_paths)}개 스템 검출")
         
         # 결과 필터링 + 스펙트로그램 동시 생성
         result_stems = {}

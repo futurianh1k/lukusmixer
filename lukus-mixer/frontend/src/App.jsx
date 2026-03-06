@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import FileUpload from './components/FileUpload';
 import StemSelector from './components/StemSelector';
@@ -10,9 +10,11 @@ import axios from 'axios';
 const API_BASE = '/api';
 
 const MODELS = [
-  { id: 'htdemucs', name: '4 스템 (기본)', stems: ['vocals', 'drums', 'bass', 'other'] },
-  { id: 'htdemucs_ft', name: '4 스템 (고품질)', stems: ['vocals', 'drums', 'bass', 'other'] },
-  { id: 'htdemucs_6s', name: '6 스템', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'] },
+  { id: 'htdemucs', name: '4 스템 (기본)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'demucs', desc: 'Demucs — 빠른 속도' },
+  { id: 'htdemucs_ft', name: '4 스템 (고품질)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'demucs', desc: 'Demucs Fine-tuned — 4배 느림' },
+  { id: 'htdemucs_6s', name: '6 스템', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], engine: 'demucs', desc: 'Demucs 6s — 기타/피아노 추가' },
+  { id: 'bs_roformer_4s', name: '4 스템 (고급 보컬)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'chained', desc: 'BS-RoFormer(SDR 12.97) + Demucs ft' },
+  { id: 'bs_roformer_6s', name: '6 스템 (고급 보컬)', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], engine: 'chained', desc: 'BS-RoFormer(SDR 12.97) + Demucs 6s — 최고 품질' },
 ];
 
 function App() {
@@ -24,6 +26,14 @@ function App() {
   const [jobStatus, setJobStatus] = useState(null);
   const [results, setResults] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [promptAppend, setPromptAppend] = useState(null);
+  const [expandedMix, setExpandedMix] = useState(null);
+  const appendIdRef = useRef(0);
+
+  const handleAppendPrompt = useCallback((text) => {
+    appendIdRef.current += 1;
+    setPromptAppend({ text, id: appendIdRef.current });
+  }, []);
 
   // 모델에 따른 스템 업데이트
   useEffect(() => {
@@ -171,18 +181,40 @@ function App() {
             {/* 모델 선택 */}
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-dark-300 mb-3">Model</h3>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-3 
-                           text-white focus:outline-none focus:border-lukus-500"
-              >
-                {MODELS.map(model => (
-                  <option key={model.id} value={model.id}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
+              <div className="space-y-1.5">
+                {MODELS.map(model => {
+                  const isSelected = selectedModel === model.id;
+                  const isChained = model.engine === 'chained';
+                  return (
+                    <button
+                      key={model.id}
+                      onClick={() => setSelectedModel(model.id)}
+                      className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all
+                        ${isSelected
+                          ? isChained
+                            ? 'border-orange-500/70 bg-orange-500/10 ring-1 ring-orange-500/30'
+                            : 'border-lukus-500/70 bg-lukus-500/10 ring-1 ring-lukus-500/30'
+                          : 'border-dark-700 bg-dark-800/50 hover:border-dark-500'
+                        }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`text-sm font-medium ${isSelected ? 'text-white' : 'text-dark-300'}`}>
+                          {model.name}
+                        </span>
+                        {isChained && (
+                          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5
+                                         rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                            PRO
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-[11px] mt-0.5 ${isSelected ? 'text-dark-400' : 'text-dark-600'}`}>
+                        {model.desc}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* 스템 선택 */}
@@ -242,6 +274,9 @@ function App() {
             onDownloadAll={handleDownloadAll}
             onAddToLibrary={handleAddToLibrary}
             selectedStems={selectedStems}
+            onAppendPrompt={handleAppendPrompt}
+            expandedMix={expandedMix}
+            onCloseExpandedMix={() => setExpandedMix(null)}
           />
         </div>
 
@@ -253,6 +288,8 @@ function App() {
             duration={uploadedFile?.duration}
             onAddToLibrary={handleAddToLibrary}
             originalFilename={uploadedFile?.filename}
+            externalPromptAppend={promptAppend}
+            onExpandMixResult={setExpandedMix}
           />
         </div>
       </div>
