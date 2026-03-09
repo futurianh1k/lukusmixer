@@ -331,12 +331,12 @@ python -m pytest tests/ -v
 | P1 | GPU 동시 작업 제한 (큐 시스템) | 아키텍처 | ✅ 완료 |
 | P1 | 모델 목록 서버에서 동적 로드 | 코드 품질 | ✅ 완료 |
 | P1 | FileUpload X 버튼 연결 | UX | ✅ 완료 |
-| P2 | Toast 알림 도입 | UX | ⏳ |
-| P2 | Error Boundary 추가 | UX | ⏳ |
-| P2 | TypeScript 마이그레이션 | 코드 품질 | ⏳ |
-| P2 | Docker 컨테이너화 | 인프라 | ⏳ |
-| P2 | WebSocket 실시간 로그 | UX | ⏳ |
-| P2 | 반응형 디자인 | UX | ⏳ |
+| P2 | Toast 알림 도입 | UX | ✅ 완료 |
+| P2 | Error Boundary 추가 | UX | ✅ 완료 |
+| P2 | TypeScript 마이그레이션 | 코드 품질 | ✅ 기반 구축 |
+| P2 | Docker 컨테이너화 | 인프라 | ✅ 완료 |
+| P2 | WebSocket 실시간 로그 | UX | ✅ 완료 |
+| P2 | 반응형 디자인 | UX | ✅ 완료 |
 
 ---
 

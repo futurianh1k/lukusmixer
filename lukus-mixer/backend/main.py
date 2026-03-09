@@ -21,7 +21,7 @@ from typing import Optional, List, Dict
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -111,6 +111,27 @@ job_store = JobStore()
 # GPU 동시 작업 제한 — VRAM 부족 방지
 MAX_CONCURRENT_SPLITS = int(os.environ.get("MAX_CONCURRENT_SPLITS", 1))
 _gpu_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SPLITS)
+
+# ──────────────────────────────────────────────
+# WebSocket 구독 관리
+# 참고: https://fastapi.tiangolo.com/advanced/websockets/
+# ──────────────────────────────────────────────
+_ws_subscribers: Dict[str, set] = {}  # job_id → {WebSocket, ...}
+
+
+async def _notify_ws(job_id: str, data: dict):
+    """해당 job_id를 구독중인 모든 WebSocket 클라이언트에게 JSON push"""
+    subs = _ws_subscribers.get(job_id)
+    if not subs:
+        return
+    dead = set()
+    msg = json.dumps(data, ensure_ascii=False)
+    for ws in subs:
+        try:
+            await ws.send_text(msg)
+        except Exception:
+            dead.add(ws)
+    subs -= dead
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -342,6 +363,18 @@ def _update_job(job_id, log=None, **kwargs):
     job_store.update_job(job_id, log=log, **kwargs)
     if log:
         logger.info(log)
+    # WebSocket 구독자에게 실시간 push
+    job = job_store.get_job(job_id)
+    if job:
+        asyncio.ensure_future(_notify_ws(job_id, {
+            "type": "job_update",
+            "job_id": job_id,
+            "status": job["status"],
+            "progress": job["progress"],
+            "message": job["message"],
+            "result": job.get("result"),
+            "logs": job.get("logs"),
+        }))
 
 
 async def process_split_job(
@@ -1086,6 +1119,47 @@ async def delete_prompt_history(filename: str):
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
     filepath.unlink()
     return {"message": f"삭제됨: {safe_name}"}
+
+
+# ──────────────────────────────────────────────
+# WebSocket 실시간 작업 상태 스트리밍
+# ──────────────────────────────────────────────
+
+@app.websocket("/ws/job/{job_id}")
+async def ws_job_status(websocket: WebSocket, job_id: str):
+    """
+    WebSocket으로 작업 상태를 실시간 push.
+    클라이언트 연결 시 즉시 현재 상태 전송 → 이후 변경 시마다 자동 push.
+    """
+    await websocket.accept()
+
+    if job_id not in _ws_subscribers:
+        _ws_subscribers[job_id] = set()
+    _ws_subscribers[job_id].add(websocket)
+
+    try:
+        job = job_store.get_job(job_id)
+        if job:
+            await websocket.send_text(json.dumps({
+                "type": "job_update",
+                "job_id": job_id,
+                "status": job["status"],
+                "progress": job["progress"],
+                "message": job["message"],
+                "result": job.get("result"),
+                "logs": job.get("logs"),
+            }, ensure_ascii=False))
+
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        subs = _ws_subscribers.get(job_id)
+        if subs:
+            subs.discard(websocket)
+            if not subs:
+                del _ws_subscribers[job_id]
 
 
 if __name__ == "__main__":

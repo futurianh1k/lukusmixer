@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════
+# LUKUS Music Mixer — Docker Compose
+# ═══════════════════════════════════════════════════
+# 실행:
+#   docker compose up -d            # 전체 시작
+#   docker compose up -d backend    # 백엔드만
+#   docker compose logs -f backend  # 백엔드 로그
+#
+# GPU 사용 시 NVIDIA Container Toolkit 필요:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/
+#
+# 환경변수 커스터마이징:
+#   .env 파일 생성 또는 docker compose --env-file .env.prod up
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: lukus-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - lukus-data:/data
+      - lukus-models:/root/.cache
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LUKUS_DATA_DIR=/data
+      - FILE_TTL_HOURS=${FILE_TTL_HOURS:-24}
+      - CLEANUP_INTERVAL_MINUTES=${CLEANUP_INTERVAL_MINUTES:-30}
+      - MAX_CONCURRENT_SPLITS=${MAX_CONCURRENT_SPLITS:-1}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-209715200}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:80}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: lukus-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  lukus-data:
+    name: lukus-mixer-data
+  lukus-models:
+    name: lukus-mixer-models

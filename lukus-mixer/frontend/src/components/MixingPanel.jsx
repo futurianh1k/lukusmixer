@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import { Mic2, Drum, Guitar, Piano, Waves, Music, Volume2, VolumeX, Play, Loader2, Download, Plus, Trash2, Save, History, X, Clock, Maximize2 } from 'lucide-react';
 import AudioPlayer from './AudioPlayer';
 import axios from 'axios';
@@ -90,10 +91,10 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
         original_filename: originalFilename || 'prompt',
         mix_result_info: mixLog || '',
       });
-      alert(res.data.message);
+      toast.success(res.data.message);
       loadHistory();
     } catch (err) {
-      alert('저장 실패: ' + (err.response?.data?.detail || err.message));
+      toast.error('저장 실패: ' + (err.response?.data?.detail || err.message));
     } finally {
       setSavingPrompt(false);
     }
@@ -111,7 +112,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
       await axios.delete(`${API_BASE}/prompt-history/${filename}`);
       setHistoryItems(prev => prev.filter(h => h.filename !== filename));
     } catch (err) {
-      alert('삭제 실패');
+      toast.error('삭제 실패');
     }
   };
 
