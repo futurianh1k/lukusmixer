@@ -3,12 +3,16 @@ Demucs Service - STEM 분리 로직
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 지원 엔진:
   - Demucs v4 (htdemucs, htdemucs_ft, htdemucs_6s)
-  - audio-separator (BS-RoFormer + Demucs 6s 체이닝)
+  - audio-separator 체이닝:
+    * BS-RoFormer + Demucs (6스템)
+    * BS-RoFormer + Demucs + MelBand-RoFormer + DrumSep (10스템)
 
 참고 출처:
   - python-audio-separator: https://github.com/nomadkaraoke/python-audio-separator (MIT)
   - BS-RoFormer: https://github.com/lucidrains/BS-RoFormer
   - Demucs v4: https://github.com/facebookresearch/demucs (MIT)
+  - MelBand-RoFormer Karaoke: aufr33 & viperx (보컬 세분화용)
+  - MDX23C DrumSep: aufr33 & jarredou (드럼 세분화용)
 """
 
 import os
@@ -54,18 +58,46 @@ DEMUCS_MODELS = {
         "engine": "chained",
         "pipeline": ["bs_roformer_vocal", "demucs_ft_instrumental"],
     },
+    "bs_roformer_10s": {
+        "name": "10 스템 (보컬+드럼 세분화)",
+        "stems": [
+            "lead_vocals", "backing_vocals",
+            "kick", "snare", "toms", "cymbals",
+            "bass", "guitar", "piano", "other",
+        ],
+        "description": "BS-RoFormer + Demucs 6s + MelBand Karaoke + DrumSep — 10스템 최고 품질",
+        "engine": "chained_10s",
+    },
 }
 
 STEM_LABELS = {
     "vocals": {"ko": "보컬", "en": "Vocals", "color": "#22c55e"},
+    "lead_vocals": {"ko": "리드 보컬", "en": "Lead Vocals", "color": "#22c55e"},
+    "backing_vocals": {"ko": "백킹 보컬", "en": "Backing Vocals", "color": "#4ade80"},
     "drums": {"ko": "드럼", "en": "Drums", "color": "#f97316"},
+    "kick": {"ko": "킥", "en": "Kick", "color": "#f97316"},
+    "snare": {"ko": "스네어", "en": "Snare", "color": "#fb923c"},
+    "toms": {"ko": "탐", "en": "Toms", "color": "#fdba74"},
+    "cymbals": {"ko": "심벌즈", "en": "Cymbals", "color": "#fde68a"},
     "bass": {"ko": "베이스", "en": "Bass", "color": "#8b5cf6"},
     "guitar": {"ko": "기타", "en": "Guitar", "color": "#06b6d4"},
     "piano": {"ko": "피아노", "en": "Piano", "color": "#ec4899"},
     "other": {"ko": "기타 악기", "en": "Other", "color": "#64748b"},
 }
 
+# 10스템에서 하위 스템 계층 구조 (UI 트리 표시용)
+STEM_HIERARCHY = {
+    "lead_vocals": {"parent": "vocals", "group": "vocals"},
+    "backing_vocals": {"parent": "vocals", "group": "vocals"},
+    "kick": {"parent": "drums", "group": "drums"},
+    "snare": {"parent": "drums", "group": "drums"},
+    "toms": {"parent": "drums", "group": "drums"},
+    "cymbals": {"parent": "drums", "group": "drums"},
+}
+
 BS_ROFORMER_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
+MELBAND_KARAOKE_MODEL = "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"
+DRUMSEP_MODEL = "MDX23C-DrumSep-aufr33-jarredou.ckpt"
 
 
 class DemucsService:
@@ -145,7 +177,9 @@ class DemucsService:
 
         engine = model_info.get("engine", "demucs")
 
-        if engine == "chained":
+        if engine == "chained_10s":
+            return self._separate_chained_10s(audio_path, model, output_dir, mp3_output, progress_cb)
+        elif engine == "chained":
             return self._separate_chained(audio_path, model, output_dir, mp3_output, progress_cb)
         else:
             return self._separate_demucs(audio_path, model, output_dir, mp3_output, progress_cb)
@@ -304,6 +338,190 @@ class DemucsService:
             shutil.rmtree(work_dir, ignore_errors=True)
 
         return stems
+
+    # ──────────────────────────────────────────
+    # Engine: Chained 10-stem
+    # ──────────────────────────────────────────
+
+    def _separate_chained_10s(
+        self, audio_path, model, output_dir, mp3_output, progress_cb
+    ) -> Dict[str, str]:
+        """
+        4-Pass 체이닝 파이프라인 (10스템):
+          Pass 1: BS-RoFormer → Vocals / Instrumental
+          Pass 2: Demucs 6s → Instrumental → drums, bass, guitar, piano, other
+          Pass 3: MelBand-RoFormer Karaoke → Vocals → Lead Vocals / Backing Vocals
+          Pass 4: MDX23C DrumSep → Drums → kick, snare, toms, hh, ride, crash → (hh+ride+crash → cymbals)
+        """
+        if not self.audio_separator_available:
+            raise Exception(
+                "audio-separator가 설치되지 않았습니다. pip install audio-separator[gpu]"
+            )
+
+        if not os.path.exists(audio_path):
+            raise Exception(f"파일을 찾을 수 없습니다: {audio_path}")
+
+        if output_dir is None:
+            output_dir = tempfile.mkdtemp(prefix="chained10_")
+        os.makedirs(output_dir, exist_ok=True)
+
+        from audio_separator.separator import Separator
+
+        work_dir = tempfile.mkdtemp(prefix="chain10_work_")
+        stems: Dict[str, str] = {}
+        ext = ".mp3" if mp3_output else ".wav"
+
+        try:
+            # ═══ Pass 1/4: BS-RoFormer 보컬/반주 분리 ═══
+            if progress_cb:
+                progress_cb("Pass 1/4: BS-RoFormer 보컬 분리 (최고 품질)...")
+            print(f"🎤 Pass 1/4: BS-RoFormer 보컬/반주 분리")
+
+            pass1_dir = os.path.join(work_dir, "pass1")
+            os.makedirs(pass1_dir)
+            sep = Separator(output_dir=pass1_dir)
+            sep.load_model(BS_ROFORMER_MODEL)
+            pass1_results = sep.separate(audio_path)
+
+            vocal_wav = None
+            instrumental_wav = None
+            for f in pass1_results:
+                full = os.path.join(pass1_dir, f)
+                if "Vocal" in f:
+                    vocal_wav = full
+                elif "Instrumental" in f:
+                    instrumental_wav = full
+
+            if not vocal_wav or not instrumental_wav:
+                raise Exception("Pass 1 실패: Vocals/Instrumental 파일 없음")
+            print(f"  ✅ Pass 1 완료")
+
+            # ═══ Pass 2/4: Demucs 6s 반주 분리 ═══
+            if progress_cb:
+                progress_cb("Pass 2/4: Demucs 6s 반주 분리...")
+            print(f"🎛️ Pass 2/4: Demucs 6s 반주 분리")
+
+            pass2_dir = os.path.join(work_dir, "pass2")
+            os.makedirs(pass2_dir)
+            sep2 = Separator(output_dir=pass2_dir)
+            sep2.load_model("htdemucs_6s.yaml")
+            pass2_results = sep2.separate(instrumental_wav)
+
+            drums_wav = None
+            stem_map_p2 = {
+                "Drums": "drums", "Bass": "bass", "Guitar": "guitar",
+                "Piano": "piano", "Other": "other", "Vocals": "_skip",
+            }
+
+            for f in pass2_results:
+                full = os.path.join(pass2_dir, f)
+                for key, stem_name in stem_map_p2.items():
+                    if f"({key})" in f:
+                        if stem_name == "drums":
+                            drums_wav = full
+                        elif stem_name != "_skip":
+                            final_path = os.path.join(output_dir, f"{stem_name}{ext}")
+                            self._convert_audio(full, final_path, mp3_output)
+                            stems[stem_name] = final_path
+                            print(f"  ✅ {stem_name}: {final_path}")
+                        break
+
+            if not drums_wav:
+                raise Exception("Pass 2 실패: Drums 파일 없음")
+            print(f"  ✅ Pass 2 완료")
+
+            # ═══ Pass 3/4: MelBand-RoFormer 보컬 세분화 ═══
+            if progress_cb:
+                progress_cb("Pass 3/4: MelBand-RoFormer 보컬 세분화 (Lead/Backing)...")
+            print(f"🎙️ Pass 3/4: MelBand-RoFormer 보컬 세분화")
+
+            pass3_dir = os.path.join(work_dir, "pass3")
+            os.makedirs(pass3_dir)
+            sep3 = Separator(output_dir=pass3_dir)
+            sep3.load_model(MELBAND_KARAOKE_MODEL)
+            pass3_results = sep3.separate(vocal_wav)
+
+            mel_tag = "mel_band_roformer_karaoke"
+            for f in pass3_results:
+                full = os.path.join(pass3_dir, f)
+                if f"(Instrumental)_{mel_tag}" in f:
+                    final_path = os.path.join(output_dir, f"backing_vocals{ext}")
+                    self._convert_audio(full, final_path, mp3_output)
+                    stems["backing_vocals"] = final_path
+                    print(f"  ✅ backing_vocals: {final_path}")
+                elif f"(Vocals)_{mel_tag}" in f:
+                    final_path = os.path.join(output_dir, f"lead_vocals{ext}")
+                    self._convert_audio(full, final_path, mp3_output)
+                    stems["lead_vocals"] = final_path
+                    print(f"  ✅ lead_vocals: {final_path}")
+
+            print(f"  ✅ Pass 3 완료")
+
+            # ═══ Pass 4/4: DrumSep 드럼 세분화 ═══
+            if progress_cb:
+                progress_cb("Pass 4/4: DrumSep 드럼 세분화 (Kick/Snare/Toms/Cymbals)...")
+            print(f"🥁 Pass 4/4: DrumSep 드럼 세분화")
+
+            pass4_dir = os.path.join(work_dir, "pass4")
+            os.makedirs(pass4_dir)
+            sep4 = Separator(output_dir=pass4_dir)
+            sep4.load_model(DRUMSEP_MODEL)
+            pass4_results = sep4.separate(drums_wav)
+
+            cymbal_parts = []
+            drum_stem_map = {
+                "kick": "kick", "snare": "snare", "toms": "toms",
+            }
+            cymbal_stems = ["hh", "ride", "crash"]
+
+            for f in pass4_results:
+                full = os.path.join(pass4_dir, f)
+                matched = False
+                for key, stem_name in drum_stem_map.items():
+                    if f"({key})" in f:
+                        final_path = os.path.join(output_dir, f"{stem_name}{ext}")
+                        self._convert_audio(full, final_path, mp3_output)
+                        stems[stem_name] = final_path
+                        print(f"  ✅ {stem_name}: {final_path}")
+                        matched = True
+                        break
+                if not matched:
+                    for cs in cymbal_stems:
+                        if f"({cs})" in f:
+                            cymbal_parts.append(full)
+                            break
+
+            if cymbal_parts:
+                cymbals_path = os.path.join(output_dir, f"cymbals{ext}")
+                self._merge_audio_files(cymbal_parts, cymbals_path, mp3_output)
+                stems["cymbals"] = cymbals_path
+                print(f"  ✅ cymbals (hh+ride+crash 합산): {cymbals_path}")
+
+            print(f"  ✅ Pass 4 완료")
+
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+        return stems
+
+    def _merge_audio_files(self, sources: List[str], dst: str, to_mp3: bool):
+        """여러 WAV 파일을 합산하여 하나로 병합"""
+        try:
+            from pydub import AudioSegment
+            combined = None
+            for src in sources:
+                audio = AudioSegment.from_file(src)
+                if combined is None:
+                    combined = audio
+                else:
+                    combined = combined.overlay(audio)
+            if combined:
+                fmt = "mp3" if to_mp3 and dst.endswith(".mp3") else "wav"
+                combined.export(dst, format=fmt, bitrate="320k" if fmt == "mp3" else None)
+        except Exception as e:
+            print(f"  ⚠️ 오디오 병합 실패: {e}")
+            if sources:
+                shutil.copy2(sources[0], dst)
 
     def _convert_audio(self, src: str, dst: str, to_mp3: bool):
         """WAV → MP3 변환 (또는 그냥 복사)"""

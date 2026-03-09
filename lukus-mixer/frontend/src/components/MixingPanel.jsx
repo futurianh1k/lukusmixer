@@ -6,12 +6,18 @@ import axios from 'axios';
 const API_BASE = '/api';
 
 const STEM_CONFIG = {
-  vocals:  { label: '보컬', en: 'Vocals', icon: Mic2,   color: 'green' },
-  drums:   { label: '드럼', en: 'Drums',  icon: Drum,   color: 'orange' },
-  bass:    { label: '베이스', en: 'Bass', icon: Waves,  color: 'purple' },
-  guitar:  { label: '기타', en: 'Guitar', icon: Guitar, color: 'cyan' },
-  piano:   { label: '피아노', en: 'Piano', icon: Piano,  color: 'pink' },
-  other:   { label: '기타악기', en: 'Other', icon: Music, color: 'slate' },
+  vocals:         { label: '보컬', en: 'Vocals', icon: Mic2,   color: 'green' },
+  lead_vocals:    { label: '리드보컬', en: 'Lead Vocals', icon: Mic2,   color: 'green' },
+  backing_vocals: { label: '백킹보컬', en: 'Backing Vocals', icon: Mic2, color: 'green' },
+  drums:          { label: '드럼', en: 'Drums',  icon: Drum,   color: 'orange' },
+  kick:           { label: '킥', en: 'Kick',    icon: Drum,   color: 'orange' },
+  snare:          { label: '스네어', en: 'Snare', icon: Drum,   color: 'orange' },
+  toms:           { label: '탐', en: 'Toms',    icon: Drum,   color: 'orange' },
+  cymbals:        { label: '심벌즈', en: 'Cymbals', icon: Drum, color: 'yellow' },
+  bass:           { label: '베이스', en: 'Bass', icon: Waves,  color: 'purple' },
+  guitar:         { label: '기타', en: 'Guitar', icon: Guitar, color: 'cyan' },
+  piano:          { label: '피아노', en: 'Piano', icon: Piano,  color: 'pink' },
+  other:          { label: '기타악기', en: 'Other', icon: Music, color: 'slate' },
 };
 
 const VOLUME_PRESETS = [

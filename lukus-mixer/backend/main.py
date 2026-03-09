@@ -426,7 +426,13 @@ async def stream_stem(job_id: str, stem_name: str):
 
 INSTRUMENT_MAP = {
     "보컬": "vocals", "목소리": "vocals", "노래": "vocals", "음성": "vocals",
+    "리드보컬": "lead_vocals", "리드": "lead_vocals", "메인보컬": "lead_vocals",
+    "백킹보컬": "backing_vocals", "코러스": "backing_vocals", "하모니": "backing_vocals", "백보컬": "backing_vocals",
     "드럼": "drums", "드럼스": "drums",
+    "킥": "kick", "킥드럼": "kick", "베이스드럼": "kick",
+    "스네어": "snare", "스네어드럼": "snare",
+    "탐": "toms", "탐탐": "toms", "톰": "toms",
+    "심벌즈": "cymbals", "심벌": "cymbals", "하이햇": "cymbals", "라이드": "cymbals", "크래시": "cymbals",
     "베이스": "bass", "베이스기타": "bass",
     "기타": "guitar", "일렉기타": "guitar", "어쿠스틱기타": "guitar", "전기기타": "guitar",
     "피아노": "piano", "키보드": "piano", "건반": "piano",
@@ -440,10 +446,12 @@ SECTION_MAP = {
 }
 
 VOLUME_ACTION_MAP = {
+    "최대로 크게": 12, "최대": 12, "매우 크게": 9,
     "키워": 6, "올려": 6, "크게": 6, "강조": 6, "높여": 6,
     "조금 키워": 3, "약간 키워": 3, "살짝 키워": 3,
-    "줄여": -6, "작게": -6, "낮춰": -6,
     "조금 줄여": -3, "약간 줄여": -3,
+    "줄여": -6, "작게": -6, "낮춰": -6,
+    "매우 작게": -9, "최소로 작게": -12, "최소": -12,
     "음소거": -100, "뮤트": -100, "없애": -100, "제거": -100,
 }
 

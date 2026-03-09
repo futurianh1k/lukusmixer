@@ -15,6 +15,7 @@ const MODELS = [
   { id: 'htdemucs_6s', name: '6 스템', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], engine: 'demucs', desc: 'Demucs 6s — 기타/피아노 추가' },
   { id: 'bs_roformer_4s', name: '4 스템 (고급 보컬)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'chained', desc: 'BS-RoFormer(SDR 12.97) + Demucs ft' },
   { id: 'bs_roformer_6s', name: '6 스템 (고급 보컬)', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], engine: 'chained', desc: 'BS-RoFormer(SDR 12.97) + Demucs 6s — 최고 품질' },
+  { id: 'bs_roformer_10s', name: '10 스템 (보컬+드럼 세분화)', stems: ['lead_vocals', 'backing_vocals', 'kick', 'snare', 'toms', 'cymbals', 'bass', 'guitar', 'piano', 'other'], engine: 'chained_10s', desc: 'BS-RoFormer + Demucs 6s + MelBand + DrumSep — 10스템 최고 품질' },
 ];
 
 function App() {
@@ -184,15 +185,18 @@ function App() {
               <div className="space-y-1.5">
                 {MODELS.map(model => {
                   const isSelected = selectedModel === model.id;
-                  const isChained = model.engine === 'chained';
+                  const isPro = model.engine === 'chained' || model.engine === 'chained_10s';
+                  const is10s = model.engine === 'chained_10s';
                   return (
                     <button
                       key={model.id}
                       onClick={() => setSelectedModel(model.id)}
                       className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all
                         ${isSelected
-                          ? isChained
-                            ? 'border-orange-500/70 bg-orange-500/10 ring-1 ring-orange-500/30'
+                          ? isPro
+                            ? is10s
+                              ? 'border-red-500/70 bg-red-500/10 ring-1 ring-red-500/30'
+                              : 'border-orange-500/70 bg-orange-500/10 ring-1 ring-orange-500/30'
                             : 'border-lukus-500/70 bg-lukus-500/10 ring-1 ring-lukus-500/30'
                           : 'border-dark-700 bg-dark-800/50 hover:border-dark-500'
                         }`}
@@ -201,10 +205,12 @@ function App() {
                         <span className={`text-sm font-medium ${isSelected ? 'text-white' : 'text-dark-300'}`}>
                           {model.name}
                         </span>
-                        {isChained && (
-                          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5
-                                         rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                            PRO
+                        {isPro && (
+                          <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5
+                                         rounded border ${is10s
+                                           ? 'bg-red-500/20 text-red-400 border-red-500/30'
+                                           : 'bg-orange-500/20 text-orange-400 border-orange-500/30'}`}>
+                            {is10s ? 'MAX' : 'PRO'}
                           </span>
                         )}
                       </div>

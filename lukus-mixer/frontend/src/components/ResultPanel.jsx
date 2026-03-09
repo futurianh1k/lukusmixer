@@ -3,8 +3,8 @@ import { Download, Upload, Plus, MoreHorizontal, FileAudio, ZoomIn, ZoomOut, X, 
 import AudioPlayer from './AudioPlayer';
 
 const STEM_COLORS = {
-  vocals: 'green',
-  drums: 'orange',
+  vocals: 'green', lead_vocals: 'green', backing_vocals: 'emerald',
+  drums: 'orange', kick: 'orange', snare: 'amber', toms: 'yellow', cymbals: 'lime',
   bass: 'purple',
   guitar: 'cyan',
   piano: 'pink',
@@ -12,19 +12,24 @@ const STEM_COLORS = {
 };
 
 const STEM_LABELS = {
-  vocals: 'Vocals',
-  drums: 'Drums',
-  bass: 'Bass',
-  guitar: 'Guitar',
-  piano: 'Piano',
-  other: 'Other',
+  vocals: 'Vocals', lead_vocals: 'Lead Vocals', backing_vocals: 'Backing Vocals',
+  drums: 'Drums', kick: 'Kick', snare: 'Snare', toms: 'Toms', cymbals: 'Cymbals',
+  bass: 'Bass', guitar: 'Guitar', piano: 'Piano', other: 'Other',
 };
 
 const STEM_KR = {
-  vocals: '보컬', drums: '드럼', bass: '베이스',
-  guitar: '기타', piano: '피아노', other: '기타악기',
+  vocals: '보컬', lead_vocals: '리드보컬', backing_vocals: '백킹보컬',
+  drums: '드럼', kick: '킥', snare: '스네어', toms: '탐', cymbals: '심벌즈',
+  bass: '베이스', guitar: '기타', piano: '피아노', other: '기타악기',
   Original: '전체',
 };
+
+const STEM_GROUPS = {
+  lead_vocals: 'vocals', backing_vocals: 'vocals',
+  kick: 'drums', snare: 'drums', toms: 'drums', cymbals: 'drums',
+};
+
+const GROUP_LABELS = { vocals: 'Vocals', drums: 'Drums' };
 
 const VOLUME_OPTIONS = [
   { label: '최대 (+12dB)', action: '최대로 크게', db: 12 },
@@ -377,10 +382,95 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
   );
 }
 
+function StemCard({ stemName, stem, jobId, specHeight, stemTimes, audioRefs,
+                    onDownload, handleStemTimeUpdate, handleSpecSeek, onAppendPrompt, indent }) {
+  const color = STEM_COLORS[stemName] || 'slate';
+  const label = STEM_LABELS[stemName] || stemName;
+
+  return (
+    <div className={`card p-3 ${indent ? 'ml-4 border-l-2 border-dark-600' : ''}`}>
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <AudioPlayer
+            url={`/api/stream/${jobId}/${stemName}`}
+            title={label}
+            duration={stem?.duration}
+            color={color}
+            onTimeUpdate={(t) => handleStemTimeUpdate(stemName, t)}
+            externalAudioRef={el => { audioRefs.current[stemName] = el; }}
+          />
+        </div>
+        <button
+          onClick={() => onDownload(stemName)}
+          className="p-2 text-dark-400 hover:text-white hover:bg-dark-700
+                     rounded-lg transition-colors flex-shrink-0"
+          title={`${label} 다운로드`}
+        >
+          <Download className="w-5 h-5" />
+        </button>
+      </div>
+      <Spectrogram
+        src={`/api/spectrogram/${jobId}/${stemName}`}
+        label={label} stemName={stemName} height={specHeight}
+        currentTime={stemTimes[stemName] || 0} duration={stem?.duration}
+        onSeek={(t) => handleSpecSeek(stemName, t)} onAppendPrompt={onAppendPrompt}
+      />
+    </div>
+  );
+}
+
+function StemGroup({ groupName, stemNames, results, jobId, specHeight, stemTimes, audioRefs,
+                     onDownload, handleStemTimeUpdate, handleSpecSeek, onAppendPrompt,
+                     collapsedGroups, toggleGroup }) {
+  const isCollapsed = collapsedGroups[groupName];
+  const groupLabel = GROUP_LABELS[groupName] || groupName;
+  const groupColor = groupName === 'vocals' ? 'green' : 'orange';
+
+  return (
+    <div className={`rounded-lg border ${
+      groupColor === 'green' ? 'border-green-500/20' : 'border-orange-500/20'
+    } overflow-hidden`}>
+      <button
+        onClick={() => toggleGroup(groupName)}
+        className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold
+          transition-colors ${
+            groupColor === 'green'
+              ? 'bg-green-500/10 text-green-400 hover:bg-green-500/15'
+              : 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/15'
+          }`}
+      >
+        <span className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            groupColor === 'green' ? 'bg-green-400' : 'bg-orange-400'
+          }`} />
+          {groupLabel} ({stemNames.length} sub-stems)
+        </span>
+        <span className="text-[10px]">{isCollapsed ? '▶' : '▼'}</span>
+      </button>
+      {!isCollapsed && (
+        <div className="space-y-2 p-2">
+          {stemNames.map(stemName => (
+            <StemCard key={stemName} stemName={stemName} stem={results[stemName]}
+              jobId={jobId} specHeight={specHeight} stemTimes={stemTimes}
+              audioRefs={audioRefs} onDownload={onDownload} indent
+              handleStemTimeUpdate={handleStemTimeUpdate}
+              handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, onAddToLibrary, selectedStems = [], onAppendPrompt, expandedMix, onCloseExpandedMix }) {
   const [specSize, setSpecSize] = useState('normal');
   const [stemTimes, setStemTimes] = useState({});
+  const [collapsedGroups, setCollapsedGroups] = useState({});
   const audioRefs = useRef({});
+
+  const toggleGroup = useCallback((groupName) => {
+    setCollapsedGroups(prev => ({ ...prev, [groupName]: !prev[groupName] }));
+  }, []);
 
   const handleStemTimeUpdate = (stemName, time) => {
     setStemTimes(prev => ({ ...prev, [stemName]: time }));
@@ -545,48 +635,58 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
         </h3>
 
         <div className="space-y-3">
-          {stemKeys.map(stemName => {
-            const stem = results[stemName];
-            const color = STEM_COLORS[stemName] || 'slate';
-            const label = STEM_LABELS[stemName] || stemName;
+          {(() => {
+            const hasGroups = stemKeys.some(s => STEM_GROUPS[s]);
 
-            return (
-              <div key={stemName} className="card p-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <AudioPlayer
-                      url={`/api/stream/${jobId}/${stemName}`}
-                      title={label}
-                      duration={stem.duration}
-                      color={color}
-                      onTimeUpdate={(t) => handleStemTimeUpdate(stemName, t)}
-                      externalAudioRef={el => { audioRefs.current[stemName] = el; }}
-                    />
-                  </div>
+            if (!hasGroups) {
+              return stemKeys.map(stemName => (
+                <StemCard key={stemName} stemName={stemName} stem={results[stemName]}
+                  jobId={jobId} specHeight={specHeight} stemTimes={stemTimes}
+                  audioRefs={audioRefs} onDownload={onDownload}
+                  handleStemTimeUpdate={handleStemTimeUpdate}
+                  handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt} />
+              ));
+            }
 
-                  <button
-                    onClick={() => onDownload(stemName)}
-                    className="p-2 text-dark-400 hover:text-white hover:bg-dark-700
-                               rounded-lg transition-colors flex-shrink-0"
-                    title={`${label} 다운로드`}
-                  >
-                    <Download className="w-5 h-5" />
-                  </button>
-                </div>
+            const grouped = {};
+            const standalone = [];
+            stemKeys.forEach(s => {
+              const g = STEM_GROUPS[s];
+              if (g) {
+                if (!grouped[g]) grouped[g] = [];
+                grouped[g].push(s);
+              } else {
+                standalone.push(s);
+              }
+            });
 
-                <Spectrogram
-                  src={`/api/spectrogram/${jobId}/${stemName}`}
-                  label={label}
-                  stemName={stemName}
-                  height={specHeight}
-                  currentTime={stemTimes[stemName] || 0}
-                  duration={stem.duration}
-                  onSeek={(t) => handleSpecSeek(stemName, t)}
-                  onAppendPrompt={onAppendPrompt}
-                />
-              </div>
-            );
-          })}
+            const groupOrder = ['vocals', 'drums'];
+            const rendered = [];
+
+            groupOrder.forEach(gName => {
+              if (!grouped[gName]) return;
+              rendered.push(
+                <StemGroup key={gName} groupName={gName} stemNames={grouped[gName]}
+                  results={results} jobId={jobId} specHeight={specHeight}
+                  stemTimes={stemTimes} audioRefs={audioRefs} onDownload={onDownload}
+                  handleStemTimeUpdate={handleStemTimeUpdate}
+                  handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt}
+                  collapsedGroups={collapsedGroups} toggleGroup={toggleGroup} />
+              );
+            });
+
+            standalone.forEach(stemName => {
+              rendered.push(
+                <StemCard key={stemName} stemName={stemName} stem={results[stemName]}
+                  jobId={jobId} specHeight={specHeight} stemTimes={stemTimes}
+                  audioRefs={audioRefs} onDownload={onDownload}
+                  handleStemTimeUpdate={handleStemTimeUpdate}
+                  handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt} />
+              );
+            });
+
+            return rendered;
+          })()}
         </div>
       </div>
 
