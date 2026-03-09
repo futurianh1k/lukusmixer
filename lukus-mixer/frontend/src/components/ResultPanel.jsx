@@ -389,7 +389,7 @@ function StemCard({ stemName, stem, jobId, specHeight, stemTimes, audioRefs,
 
   return (
     <div className={`card p-3 ${indent ? 'ml-4 border-l-2 border-dark-600' : ''}`}>
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <div className="flex-1">
           <AudioPlayer
             url={`/api/stream/${jobId}/${stemName}`}
@@ -398,23 +398,24 @@ function StemCard({ stemName, stem, jobId, specHeight, stemTimes, audioRefs,
             color={color}
             onTimeUpdate={(t) => handleStemTimeUpdate(stemName, t)}
             externalAudioRef={el => { audioRefs.current[stemName] = el; }}
-          />
+          >
+            <Spectrogram
+              src={`/api/spectrogram/${jobId}/${stemName}`}
+              label={label} stemName={stemName} height={specHeight}
+              currentTime={stemTimes[stemName] || 0} duration={stem?.duration}
+              onSeek={(t) => handleSpecSeek(stemName, t)} onAppendPrompt={onAppendPrompt}
+            />
+          </AudioPlayer>
         </div>
         <button
           onClick={() => onDownload(stemName)}
           className="p-2 text-dark-400 hover:text-white hover:bg-dark-700
-                     rounded-lg transition-colors flex-shrink-0"
+                     rounded-lg transition-colors flex-shrink-0 mt-1"
           title={`${label} 다운로드`}
         >
           <Download className="w-5 h-5" />
         </button>
       </div>
-      <Spectrogram
-        src={`/api/spectrogram/${jobId}/${stemName}`}
-        label={label} stemName={stemName} height={specHeight}
-        currentTime={stemTimes[stemName] || 0} duration={stem?.duration}
-        onSeek={(t) => handleSpecSeek(stemName, t)} onAppendPrompt={onAppendPrompt}
-      />
     </div>
   );
 }
@@ -568,19 +569,20 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
             color="orange"
             onTimeUpdate={(t) => handleStemTimeUpdate('_original', t)}
             externalAudioRef={el => { audioRefs.current['_original'] = el; }}
-          />
-          {uploadedFile.file_id && (
-            <Spectrogram
-              src={`/api/spectrogram-original/${uploadedFile.file_id}`}
-              label="Original"
-              stemName="Original"
-              height={specHeight}
-              currentTime={stemTimes['_original'] || 0}
-              duration={uploadedFile.duration}
-              onSeek={(t) => handleSpecSeek('_original', t)}
-              onAppendPrompt={onAppendPrompt}
-            />
-          )}
+          >
+            {uploadedFile.file_id && (
+              <Spectrogram
+                src={`/api/spectrogram-original/${uploadedFile.file_id}`}
+                label="Original"
+                stemName="Original"
+                height={specHeight}
+                currentTime={stemTimes['_original'] || 0}
+                duration={uploadedFile.duration}
+                onSeek={(t) => handleSpecSeek('_original', t)}
+                onAppendPrompt={onAppendPrompt}
+              />
+            )}
+          </AudioPlayer>
         </div>
       )}
 

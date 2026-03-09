@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react';
 
-function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTimeUpdate: onTimeUpdateCb, externalAudioRef }) {
+function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTimeUpdate: onTimeUpdateCb, externalAudioRef, children }) {
   const audioRef = useRef(null);
 
   const setAudioRef = useCallback((el) => {
@@ -122,12 +122,12 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
   return (
     <div className="audio-player">
       <audio ref={setAudioRef} src={url} preload="metadata" />
-      
-      <div className="flex items-center gap-3">
+
+      <div className="grid gap-x-3" style={{ gridTemplateColumns: '40px 1fr auto' }}>
         {/* 재생 버튼 */}
         <button
           onClick={togglePlay}
-          className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0
+          className={`w-10 h-10 rounded-full flex items-center justify-center self-center
                      ${c.bg} hover:opacity-90 transition-opacity`}
         >
           {isPlaying ? (
@@ -138,10 +138,9 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
         </button>
 
         {/* 타이틀 + 타임 슬라이더 */}
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0">
           <p className="text-sm font-medium text-white truncate mb-1">{title}</p>
-          
-          {/* 타임 슬라이더 */}
+
           <input
             type="range"
             min="0"
@@ -152,8 +151,7 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
             className="time-slider w-full"
             style={sliderStyle}
           />
-          
-          {/* 시간 표시 */}
+
           <div className="flex justify-between mt-0.5">
             <span className="text-xs text-dark-500">{formatTime(currentTime)}</span>
             <span className="text-xs text-dark-500">{formatTime(duration)}</span>
@@ -161,14 +159,13 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
         </div>
 
         {/* 볼륨 영역 */}
-        <div 
-          className="relative flex-shrink-0"
+        <div
+          className="relative self-center"
           onMouseEnter={handleVolumeEnter}
           onMouseLeave={handleVolumeLeave}
         >
-          {/* 세로 볼륨 슬라이더 (호버 시 표시) */}
           {showVolumeSlider && (
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2
                             bg-dark-800 border border-dark-600 rounded-lg p-2 shadow-xl z-50
                             flex flex-col items-center gap-1">
               <span className="text-[10px] text-dark-400 mb-1">
@@ -186,7 +183,7 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
               />
             </div>
           )}
-          
+
           <button
             onClick={toggleMute}
             className="text-dark-400 hover:text-white transition-colors p-1"
@@ -198,6 +195,11 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
             )}
           </button>
         </div>
+
+        {/* 타임라인 정렬된 하위 콘텐츠 (스펙트로그램 등) */}
+        {children && (
+          <div style={{ gridColumn: 2 }}>{children}</div>
+        )}
       </div>
     </div>
   );
