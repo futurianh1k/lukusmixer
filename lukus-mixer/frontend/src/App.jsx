@@ -9,17 +9,12 @@ import axios from 'axios';
 
 const API_BASE = '/api';
 
-const MODELS = [
-  { id: 'htdemucs', name: '4 스템 (기본)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'demucs', desc: 'Demucs — 빠른 속도' },
-  { id: 'htdemucs_ft', name: '4 스템 (고품질)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'demucs', desc: 'Demucs Fine-tuned — 4배 느림' },
-  { id: 'htdemucs_6s', name: '6 스템', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], engine: 'demucs', desc: 'Demucs 6s — 기타/피아노 추가' },
-  { id: 'bs_roformer_4s', name: '4 스템 (고급 보컬)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'chained', desc: 'BS-RoFormer(SDR 12.97) + Demucs ft' },
-  { id: 'bs_roformer_6s', name: '6 스템 (고급 보컬)', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], engine: 'chained', desc: 'BS-RoFormer(SDR 12.97) + Demucs 6s — 최고 품질' },
-  { id: 'bs_roformer_10s', name: '10 스템 (보컬+드럼 세분화)', stems: ['lead_vocals', 'backing_vocals', 'kick', 'snare', 'toms', 'cymbals', 'bass', 'guitar', 'piano', 'other'], engine: 'chained_10s', desc: 'BS-RoFormer + Demucs 6s + MelBand + DrumSep — 10스템 최고 품질' },
+const FALLBACK_MODELS = [
+  { id: 'htdemucs', name: '4 스템 (기본)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'demucs', description: 'Demucs — 빠른 속도' },
 ];
 
 function App() {
-  // 상태
+  const [models, setModels] = useState(FALLBACK_MODELS);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [selectedStems, setSelectedStems] = useState(['vocals', 'drums', 'bass', 'other']);
   const [selectedModel, setSelectedModel] = useState('htdemucs');
@@ -36,13 +31,47 @@ function App() {
     setPromptAppend({ text, id: appendIdRef.current });
   }, []);
 
+  // 서버에서 모델 목록 동적 로드
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/system`);
+        const serverModels = (res.data.models || []).map(m => ({
+          id: m.id,
+          name: m.name,
+          stems: m.stems,
+          engine: m.engine || 'demucs',
+          description: m.description || '',
+        }));
+        if (serverModels.length > 0) {
+          setModels(serverModels);
+        }
+      } catch (err) {
+        console.error('모델 목록 로드 실패, 폴백 사용:', err);
+      }
+    })();
+  }, []);
+
   // 모델에 따른 스템 업데이트
   useEffect(() => {
-    const model = MODELS.find(m => m.id === selectedModel);
+    const model = models.find(m => m.id === selectedModel);
     if (model) {
       setSelectedStems(model.stems);
     }
-  }, [selectedModel]);
+  }, [selectedModel, models]);
+
+  // 업로드 파일 제거
+  const handleRemoveFile = useCallback(() => {
+    if (uploadedFile?.url) {
+      URL.revokeObjectURL(uploadedFile.url);
+    }
+    setUploadedFile(null);
+    setResults(null);
+    setJobId(null);
+    setJobStatus(null);
+    setIsProcessing(false);
+    setExpandedMix(null);
+  }, [uploadedFile]);
 
   // 파일 업로드 핸들러
   const handleFileUpload = async (file) => {
@@ -141,8 +170,7 @@ function App() {
     }
   };
 
-  // 현재 모델의 사용 가능한 스템
-  const availableStems = MODELS.find(m => m.id === selectedModel)?.stems || [];
+  const availableStems = models.find(m => m.id === selectedModel)?.stems || [];
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -165,6 +193,7 @@ function App() {
               <FileUpload 
                 onUpload={handleFileUpload} 
                 uploadedFile={uploadedFile}
+                onRemove={handleRemoveFile}
               />
             </div>
 
@@ -183,14 +212,14 @@ function App() {
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-dark-300 mb-3">Model</h3>
               <div className="space-y-1.5">
-                {MODELS.map(model => {
-                  const isSelected = selectedModel === model.id;
-                  const isPro = model.engine === 'chained' || model.engine === 'chained_10s';
-                  const is10s = model.engine === 'chained_10s';
+                {models.map(m => {
+                  const isSelected = selectedModel === m.id;
+                  const isPro = m.engine === 'chained' || m.engine === 'chained_10s';
+                  const is10s = m.engine === 'chained_10s';
                   return (
                     <button
-                      key={model.id}
-                      onClick={() => setSelectedModel(model.id)}
+                      key={m.id}
+                      onClick={() => setSelectedModel(m.id)}
                       className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all
                         ${isSelected
                           ? isPro
@@ -203,7 +232,7 @@ function App() {
                     >
                       <div className="flex items-center justify-between">
                         <span className={`text-sm font-medium ${isSelected ? 'text-white' : 'text-dark-300'}`}>
-                          {model.name}
+                          {m.name}
                         </span>
                         {isPro && (
                           <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5
@@ -215,7 +244,7 @@ function App() {
                         )}
                       </div>
                       <p className={`text-[11px] mt-0.5 ${isSelected ? 'text-dark-400' : 'text-dark-600'}`}>
-                        {model.desc}
+                        {m.description}
                       </p>
                     </button>
                   );

@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, Music, X, FileAudio } from 'lucide-react';
 
-function FileUpload({ onUpload, uploadedFile }) {
+function FileUpload({ onUpload, uploadedFile, onRemove }) {
   const onDrop = useCallback((acceptedFiles) => {
     if (acceptedFiles.length > 0) {
       onUpload(acceptedFiles[0]);
@@ -33,7 +33,11 @@ function FileUpload({ onUpload, uploadedFile }) {
               {formatDuration(uploadedFile.duration)} • {formatFileSize(uploadedFile.size)}
             </p>
           </div>
-          <button className="text-dark-500 hover:text-red-400 transition-colors">
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove?.(); }}
+            className="text-dark-500 hover:text-red-400 transition-colors"
+            title="파일 제거"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>

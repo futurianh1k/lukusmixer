@@ -8,28 +8,86 @@ Demucs 기반 STEM 분리 API
     uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
+import asyncio
+import json
+import logging
+import os
+import shutil
+import tempfile
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Dict
+
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, List, Dict
-import asyncio
-import uuid
-import os
-import json
-import tempfile
-import shutil
-from pathlib import Path
-from datetime import datetime
 
-# Demucs 서비스 임포트
 from demucs_service import DemucsService, DEMUCS_MODELS
+from job_store import JobStore
+
+# ──────────────────────────────────────────────
+# Logging 설정
+# ──────────────────────────────────────────────
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+logger = logging.getLogger("lukus.api")
+
+# ──────────────────────────────────────────────
+# 임시 파일 TTL 자동 정리
+# ──────────────────────────────────────────────
+FILE_TTL_HOURS = int(os.environ.get("FILE_TTL_HOURS", 24))
+CLEANUP_INTERVAL_MINUTES = int(os.environ.get("CLEANUP_INTERVAL_MINUTES", 30))
+
+
+async def _cleanup_old_files():
+    """TTL이 지난 완료/실패 작업의 출력 파일과 DB 레코드를 정리"""
+    from datetime import timedelta
+
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_MINUTES * 60)
+        try:
+            cutoff = (datetime.now() - timedelta(hours=FILE_TTL_HOURS)).isoformat()
+            old_jobs = job_store.list_old_jobs(cutoff)
+            if not old_jobs:
+                continue
+
+            removed = 0
+            for job in old_jobs:
+                file_id = job.get("file_id", "")
+                job_dir = OUTPUT_DIR / file_id
+                if job_dir.exists():
+                    shutil.rmtree(str(job_dir), ignore_errors=True)
+                    removed += 1
+                job_store.delete_job(job["job_id"])
+
+            if removed:
+                logger.info("TTL 정리: %d개 작업 삭제 (기준: %dh)", removed, FILE_TTL_HOURS)
+        except Exception as e:
+            logger.error("TTL 정리 실패: %s", e)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """앱 시작/종료 라이프사이클 관리 — FastAPI lifespan 패턴"""
+    cleanup_task = asyncio.create_task(_cleanup_old_files())
+    logger.info("파일 TTL 정리 스케줄러 시작 (TTL=%dh, 주기=%dm)", FILE_TTL_HOURS, CLEANUP_INTERVAL_MINUTES)
+    yield
+    cleanup_task.cancel()
+
 
 app = FastAPI(
     title="LUKUS Music Mixer API",
     description="Demucs 기반 음악 STEM 분리 API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS 설정 — 허용 도메인을 명시적으로 제한 (ISMS-P 준수)
@@ -48,6 +106,11 @@ app.add_middleware(
 
 # 서비스 인스턴스
 demucs_service = DemucsService()
+job_store = JobStore()
+
+# GPU 동시 작업 제한 — VRAM 부족 방지
+MAX_CONCURRENT_SPLITS = int(os.environ.get("MAX_CONCURRENT_SPLITS", 1))
+_gpu_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SPLITS)
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -64,9 +127,6 @@ def _safe_resolve(base_dir: Path, *parts: str) -> Path:
     if not str(resolved).startswith(str(base_dir.resolve())):
         raise HTTPException(status_code=400, detail="잘못된 경로 접근입니다")
     return resolved
-
-# 작업 저장소 (실제 서비스에서는 Redis 등 사용)
-jobs: Dict[str, dict] = {}
 
 # 출력 디렉토리
 OUTPUT_DIR = Path(tempfile.gettempdir()) / "lukus_mixer_output"
@@ -258,21 +318,13 @@ async def split_stems(
     
     # 작업 생성
     job_id = str(uuid.uuid4())
-    now = datetime.now().isoformat()
-    
-    jobs[job_id] = {
-        "job_id": job_id,
-        "file_id": file_id,
-        "status": "pending",
-        "progress": 0,
-        "message": "대기 중...",
-        "result": None,
-        "created_at": now,
-        "updated_at": now,
-        "stems": request.stems,
-        "model": request.model,
-        "original_filename": original_file.name,
-    }
+    job_store.create_job(
+        job_id=job_id,
+        file_id=file_id,
+        model=request.model,
+        stems=request.stems,
+        original_filename=original_file.name,
+    )
     
     # 백그라운드 작업 시작
     background_tasks.add_task(
@@ -287,12 +339,9 @@ async def split_stems(
 
 
 def _update_job(job_id, log=None, **kwargs):
-    jobs[job_id].update(kwargs, updated_at=datetime.now().isoformat())
+    job_store.update_job(job_id, log=log, **kwargs)
     if log:
-        if "logs" not in jobs[job_id]:
-            jobs[job_id]["logs"] = []
-        jobs[job_id]["logs"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {log}")
-        print(f"  📋 {log}")
+        logger.info(log)
 
 
 async def process_split_job(
@@ -301,7 +350,22 @@ async def process_split_job(
     model: str, 
     requested_stems: List[str]
 ):
-    """백그라운드 STEM 분리 작업"""
+    """백그라운드 STEM 분리 작업 — Semaphore로 동시 실행 제한"""
+    _update_job(job_id, status="pending", progress=5,
+                message=f"대기 중 (동시 처리 제한: {MAX_CONCURRENT_SPLITS})...",
+                log="GPU 큐 대기 중...")
+
+    async with _gpu_semaphore:
+        await _process_split_inner(job_id, audio_path, model, requested_stems)
+
+
+async def _process_split_inner(
+    job_id: str,
+    audio_path: str,
+    model: str,
+    requested_stems: List[str],
+):
+    """실제 STEM 분리 로직"""
     try:
         _update_job(job_id, status="processing", progress=10, message="STEM 분리 시작...",
                     log=f"STEM 분리 시작 (model={model})")
@@ -315,7 +379,7 @@ async def process_split_job(
                 generate_spectrogram_image, audio_path, str(original_spec_path), "Original"
             )
         except Exception as e:
-            print(f"⚠️ 원본 스펙트로그램 실패: {e}")
+            logger.warning("원본 스펙트로그램 실패: %s", e)
 
         # STEM 분리 실행
         engine = DEMUCS_MODELS.get(model, {}).get("engine", "demucs")
@@ -354,7 +418,7 @@ async def process_split_job(
                     generate_spectrogram_image, stem_path, str(spec_path), stem_name
                 )
             except Exception as e:
-                print(f"⚠️ {stem_name} 스펙트로그램 실패: {e}")
+                logger.warning("%s 스펙트로그램 실패: %s", stem_name, e)
 
             result_stems[stem_name] = {
                 "name": stem_name,
@@ -369,7 +433,7 @@ async def process_split_job(
                     log=f"✅ 모든 작업 완료 ({len(result_stems)}개 스템 + 스펙트로그램)")
         
     except Exception as e:
-        print(f"❌ STEM 분리 실패 (job_id={job_id}): {e}")
+        logger.error("STEM 분리 실패 (job_id=%s): %s", job_id, e)
         _update_job(job_id, status="failed", progress=0,
                     message="처리 중 오류가 발생했습니다. 다시 시도해주세요.",
                     log=f"❌ 오류 발생: {type(e).__name__}")
@@ -378,10 +442,10 @@ async def process_split_job(
 @app.get("/api/job/{job_id}", response_model=JobStatus)
 async def get_job_status(job_id: str):
     """작업 상태 조회"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    job = jobs[job_id]
+
     return JobStatus(
         job_id=job["job_id"],
         status=job["status"],
@@ -396,7 +460,9 @@ async def get_job_status(job_id: str):
 
 def _get_original_name(job_id: str) -> str:
     """원본 파일명(확장자 제외) 가져오기"""
-    job = jobs.get(job_id, {})
+    job = job_store.get_job(job_id)
+    if not job:
+        return "audio"
     file_id = job.get("file_id", "")
     file_dir = OUTPUT_DIR / file_id
     for ext in [".mp3", ".wav", ".flac", ".ogg", ".m4a"]:
@@ -409,10 +475,9 @@ def _get_original_name(job_id: str) -> str:
 @app.get("/api/download/{job_id}/{stem_name}")
 async def download_stem(job_id: str, stem_name: str):
     """분리된 스템 다운로드 (파일명_stem.mp3 형식)"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    job = jobs[job_id]
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail="작업이 완료되지 않았습니다")
     
@@ -438,11 +503,10 @@ async def download_stem(job_id: str, stem_name: str):
 async def download_all_stems(job_id: str):
     """모든 스템을 ZIP으로 다운로드"""
     import zipfile
-    
-    if job_id not in jobs:
+
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    job = jobs[job_id]
     if job["status"] != "completed" or not job.get("result"):
         raise HTTPException(status_code=400, detail="작업이 완료되지 않았습니다")
     
@@ -465,10 +529,11 @@ async def download_all_stems(job_id: str):
 @app.get("/api/download-mix/{job_id}/{mix_id}")
 async def download_mix(job_id: str, mix_id: str):
     """믹싱 결과 다운로드"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    mixes = jobs[job_id].get("mixes", {})
+
+    mixes = job.get("mixes", {})
     if mix_id not in mixes:
         raise HTTPException(status_code=404, detail="믹싱 결과를 찾을 수 없습니다")
     
@@ -476,7 +541,7 @@ async def download_mix(job_id: str, mix_id: str):
     if not os.path.exists(mix_path):
         raise HTTPException(status_code=404, detail="파일이 존재하지 않습니다")
     
-    original_name = jobs[job_id].get("original_filename", "audio").rsplit('.', 1)[0]
+    original_name = job.get("original_filename", "audio").rsplit('.', 1)[0]
     download_name = f"{original_name}_mixed.mp3"
     
     return FileResponse(
@@ -490,10 +555,9 @@ async def download_mix(job_id: str, mix_id: str):
 @app.get("/api/stream/{job_id}/{stem_name}")
 async def stream_stem(job_id: str, stem_name: str):
     """분리된 스템 파일 반환 (seek 지원을 위해 FileResponse 사용)"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    job = jobs[job_id]
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail="작업이 완료되지 않았습니다")
     
@@ -650,25 +714,22 @@ def execute_mix(stem_paths: Dict[str, str], commands: List[dict]) -> str:
 @app.post("/api/mix/{job_id}")
 async def mix_stems_api(job_id: str, request: MixRequest):
     """프롬프트 기반 믹싱 실행"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
 
-    job = jobs[job_id]
     if job["status"] != "completed" or not job.get("result"):
         raise HTTPException(status_code=400, detail="STEM 분리가 완료되지 않았습니다")
 
     stem_paths = {name: info["path"] for name, info in job["result"].items()}
     available_stems = list(stem_paths.keys())
 
-    # 원본 파일에서 총 길이 추출
-    file_id = job.get("file_id", "")
     total_duration = 180.0
     for info in job["result"].values():
         if info.get("duration"):
             total_duration = info["duration"]
             break
 
-    # 프롬프트 파싱
     if request.commands:
         commands = request.commands
     else:
@@ -681,13 +742,11 @@ async def mix_stems_api(job_id: str, request: MixRequest):
         result_path = await asyncio.to_thread(execute_mix, stem_paths, commands)
         mix_id = str(uuid.uuid4())
 
-        if "mixes" not in jobs[job_id]:
-            jobs[job_id]["mixes"] = {}
-        jobs[job_id]["mixes"][mix_id] = {
+        job_store.add_mix(job_id, mix_id, {
             "path": result_path,
             "commands": commands,
             "prompt": request.prompt,
-        }
+        })
 
         return {
             "mix_id": mix_id,
@@ -695,17 +754,17 @@ async def mix_stems_api(job_id: str, request: MixRequest):
             "stream_url": f"/api/stream-mix/{job_id}/{mix_id}",
         }
     except Exception as e:
-        print(f"❌ 믹싱 실패 (job_id={job_id}): {e}")
+        logger.error("믹싱 실패 (job_id=%s): %s", job_id, e)
         raise HTTPException(status_code=500, detail="믹싱 처리 중 오류가 발생했습니다")
 
 
 @app.post("/api/parse-prompt/{job_id}")
 async def parse_prompt_api(job_id: str, request: MixRequest):
     """프롬프트만 파싱하여 미리보기 (실행 없이)"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
 
-    job = jobs[job_id]
     available_stems = list(job.get("result", {}).keys())
 
     total_duration = 180.0
@@ -722,10 +781,11 @@ async def parse_prompt_api(job_id: str, request: MixRequest):
 @app.get("/api/stream-mix/{job_id}/{mix_id}")
 async def stream_mix(job_id: str, mix_id: str):
     """믹싱 결과 파일 반환 (seek 지원을 위해 FileResponse 사용)"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
 
-    mixes = jobs[job_id].get("mixes", {})
+    mixes = job.get("mixes", {})
     if mix_id not in mixes:
         raise HTTPException(status_code=404, detail="믹싱 결과를 찾을 수 없습니다")
 
@@ -739,10 +799,9 @@ async def stream_mix(job_id: str, mix_id: str):
 @app.get("/api/spectrogram/{job_id}/{stem_name}")
 async def get_spectrogram(job_id: str, stem_name: str):
     """스템의 스펙트로그램 이미지 생성 및 반환"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    job = jobs[job_id]
     if job["status"] != "completed":
         raise HTTPException(status_code=400, detail="작업이 완료되지 않았습니다")
     
@@ -868,26 +927,26 @@ def generate_spectrogram_image(audio_path: str, output_path: str, label: str) ->
                 pad_inches=0)
     plt.close(fig)
 
-    print(f"  📊 스펙트로그램 생성: {label} ({_time.time() - t0:.1f}s)")
+    logger.info("스펙트로그램 생성: %s (%.1fs)", label, _time.time() - t0)
     return output_path
 
 
 @app.delete("/api/job/{job_id}")
 async def delete_job(job_id: str):
     """작업 삭제"""
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    
-    job = jobs[job_id]
+
     if job.get("result"):
         for stem_info in job["result"].values():
             try:
                 if os.path.exists(stem_info["path"]):
                     os.remove(stem_info["path"])
             except OSError as e:
-                print(f"⚠️ 스템 파일 삭제 실패: {e}")
-    
-    del jobs[job_id]
+                logger.warning("스템 파일 삭제 실패: %s", e)
+
+    job_store.delete_job(job_id)
     return {"message": "삭제 완료"}
 
 
@@ -897,13 +956,12 @@ async def delete_job(job_id: str):
 
 LIBRARY_DIR = OUTPUT_DIR / "library"
 LIBRARY_DIR.mkdir(exist_ok=True)
-library_items: List[dict] = []
 
 
 @app.get("/api/library")
 async def get_library():
     """라이브러리 목록 조회"""
-    return {"items": library_items}
+    return {"items": job_store.get_library_items()}
 
 
 @app.post("/api/library/add")
@@ -912,9 +970,9 @@ async def add_to_library(data: dict):
     job_id = data.get("job_id")
     mix_id = data.get("mix_id")
 
-    if job_id not in jobs:
+    job = job_store.get_job(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    job = jobs[job_id]
     original_name = job.get("original_filename", "audio").rsplit('.', 1)[0]
 
     item_id = str(uuid.uuid4())
@@ -927,7 +985,6 @@ async def add_to_library(data: dict):
         "mix": None,
     }
 
-    # 스템 파일 복사
     if job.get("result"):
         dest_dir = LIBRARY_DIR / item_id
         dest_dir.mkdir(exist_ok=True)
@@ -937,9 +994,9 @@ async def add_to_library(data: dict):
                 shutil.copy2(info["path"], str(dest))
                 item["stems"][stem_name] = str(dest)
 
-    # 믹스 결과 복사
-    if mix_id and job.get("mixes", {}).get(mix_id):
-        mix_path = job["mixes"][mix_id]["path"]
+    mixes = job.get("mixes", {})
+    if mix_id and mixes.get(mix_id):
+        mix_path = mixes[mix_id]["path"]
         if os.path.exists(mix_path):
             dest_dir = LIBRARY_DIR / item_id
             dest_dir.mkdir(exist_ok=True)
@@ -947,7 +1004,7 @@ async def add_to_library(data: dict):
             shutil.copy2(mix_path, str(dest))
             item["mix"] = str(dest)
 
-    library_items.append(item)
+    job_store.add_library_item(item)
     return {"item": item, "message": f"'{original_name}' 라이브러리에 추가됨"}
 
 

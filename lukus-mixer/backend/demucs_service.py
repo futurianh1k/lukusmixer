@@ -15,11 +15,14 @@ Demucs Service - STEM 분리 로직
   - MDX23C DrumSep: aufr33 & jarredou (드럼 세분화용)
 """
 
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
+
+logger = logging.getLogger("lukus.demucs")
 
 # ──────────────────────────────────────────────
 # 모델 정의
@@ -113,7 +116,7 @@ class DemucsService:
             self.demucs_module = demucs.separate
             self.demucs_available = True
         except ImportError:
-            print("⚠️ demucs 미설치: pip install -U demucs")
+            logger.warning("demucs 미설치: pip install -U demucs")
             self.demucs_module = None
 
         # audio-separator 확인
@@ -121,7 +124,7 @@ class DemucsService:
             from audio_separator.separator import Separator
             self.audio_separator_available = True
         except ImportError:
-            print("⚠️ audio-separator 미설치: pip install audio-separator[gpu]")
+            logger.warning("audio-separator 미설치: pip install audio-separator[gpu]")
 
         # CUDA 확인
         try:
@@ -144,13 +147,13 @@ class DemucsService:
                 import librosa
                 return librosa.get_duration(path=audio_path)
             except Exception as e:
-                print(f"⚠️ librosa duration 실패: {e}")
+                logger.warning("librosa duration 실패: %s", e)
         try:
             from pydub import AudioSegment
             audio = AudioSegment.from_file(audio_path)
             return len(audio) / 1000.0
         except Exception as e:
-            print(f"⚠️ pydub duration 실패: {e}")
+                logger.warning("pydub duration 실패: %s", e)
         return 0
 
     # ──────────────────────────────────────────
@@ -208,7 +211,7 @@ class DemucsService:
 
         if progress_cb:
             progress_cb(f"Demucs 실행 중 (model={model}, device={device})")
-        print(f"🎛️ Demucs 실행: model={model}, device={device}")
+        logger.info("Demucs 실행: model=%s, device=%s", model, device)
 
         try:
             self.demucs_module.main(cmd_args)
@@ -225,7 +228,7 @@ class DemucsService:
             stem_path = output_subdir / f"{stem}{ext}"
             if stem_path.exists():
                 stems[stem] = str(stem_path)
-                print(f"  ✅ {stem}: {stem_path}")
+                logger.info("  %s: %s", stem, stem_path)
 
         return stems
 
@@ -270,7 +273,7 @@ class DemucsService:
             # ═══ Pass 1: BS-RoFormer 보컬/반주 분리 ═══
             if progress_cb:
                 progress_cb("Pass 1/2: BS-RoFormer 보컬 분리 (최고 품질)...")
-            print(f"🎤 Pass 1: BS-RoFormer 보컬/반주 분리")
+            logger.info("Pass 1: BS-RoFormer 보컬/반주 분리")
 
             sep = Separator(output_dir=work_dir)
             sep.load_model(BS_ROFORMER_MODEL)
@@ -288,8 +291,8 @@ class DemucsService:
             if not vocal_wav or not instrumental_wav:
                 raise Exception("BS-RoFormer 분리 실패: Vocals/Instrumental 파일 없음")
 
-            print(f"  ✅ Vocals: {vocal_wav}")
-            print(f"  ✅ Instrumental: {instrumental_wav}")
+            logger.info("  Vocals: %s", vocal_wav)
+            logger.info("  Instrumental: %s", instrumental_wav)
 
             # vocals를 mp3로 변환하여 최종 출력
             vocals_final = os.path.join(output_dir, f"vocals{ext}")
@@ -299,7 +302,7 @@ class DemucsService:
             # ═══ Pass 2: Demucs로 반주 분리 ═══
             if progress_cb:
                 progress_cb(f"Pass 2/2: Demucs {demucs_model_name} 반주 분리...")
-            print(f"🎛️ Pass 2: Demucs {demucs_model_name} 반주 분리")
+            logger.info("Pass 2: Demucs %s 반주 분리", demucs_model_name)
 
             sep.load_model(f"{demucs_model_name}.yaml")
             pass2_results = sep.separate(instrumental_wav)
@@ -321,7 +324,7 @@ class DemucsService:
                     final_path = os.path.join(output_dir, f"{matched_stem}{ext}")
                     self._convert_audio(full, final_path, mp3_output)
                     stems[matched_stem] = final_path
-                    print(f"  ✅ {matched_stem}: {final_path}")
+                    logger.info("  %s: %s", matched_stem, final_path)
 
             # Demucs 6s가 반주에서 vocals를 또 뽑을 수 있으므로, 
             # "other"에 합산하거나 버림
@@ -374,7 +377,7 @@ class DemucsService:
             # ═══ Pass 1/4: BS-RoFormer 보컬/반주 분리 ═══
             if progress_cb:
                 progress_cb("Pass 1/4: BS-RoFormer 보컬 분리 (최고 품질)...")
-            print(f"🎤 Pass 1/4: BS-RoFormer 보컬/반주 분리")
+            logger.info("Pass 1/4: BS-RoFormer 보컬/반주 분리")
 
             pass1_dir = os.path.join(work_dir, "pass1")
             os.makedirs(pass1_dir)
@@ -393,12 +396,12 @@ class DemucsService:
 
             if not vocal_wav or not instrumental_wav:
                 raise Exception("Pass 1 실패: Vocals/Instrumental 파일 없음")
-            print(f"  ✅ Pass 1 완료")
+            logger.info("  Pass 1 완료")
 
             # ═══ Pass 2/4: Demucs 6s 반주 분리 ═══
             if progress_cb:
                 progress_cb("Pass 2/4: Demucs 6s 반주 분리...")
-            print(f"🎛️ Pass 2/4: Demucs 6s 반주 분리")
+            logger.info("Pass 2/4: Demucs 6s 반주 분리")
 
             pass2_dir = os.path.join(work_dir, "pass2")
             os.makedirs(pass2_dir)
@@ -422,17 +425,17 @@ class DemucsService:
                             final_path = os.path.join(output_dir, f"{stem_name}{ext}")
                             self._convert_audio(full, final_path, mp3_output)
                             stems[stem_name] = final_path
-                            print(f"  ✅ {stem_name}: {final_path}")
+                            logger.info("  %s: %s", stem_name, final_path)
                         break
 
             if not drums_wav:
                 raise Exception("Pass 2 실패: Drums 파일 없음")
-            print(f"  ✅ Pass 2 완료")
+            logger.info("  Pass 2 완료")
 
             # ═══ Pass 3/4: MelBand-RoFormer 보컬 세분화 ═══
             if progress_cb:
                 progress_cb("Pass 3/4: MelBand-RoFormer 보컬 세분화 (Lead/Backing)...")
-            print(f"🎙️ Pass 3/4: MelBand-RoFormer 보컬 세분화")
+            logger.info("Pass 3/4: MelBand-RoFormer 보컬 세분화")
 
             pass3_dir = os.path.join(work_dir, "pass3")
             os.makedirs(pass3_dir)
@@ -447,19 +450,19 @@ class DemucsService:
                     final_path = os.path.join(output_dir, f"backing_vocals{ext}")
                     self._convert_audio(full, final_path, mp3_output)
                     stems["backing_vocals"] = final_path
-                    print(f"  ✅ backing_vocals: {final_path}")
+                    logger.info("  backing_vocals: %s", final_path)
                 elif f"(Vocals)_{mel_tag}" in f:
                     final_path = os.path.join(output_dir, f"lead_vocals{ext}")
                     self._convert_audio(full, final_path, mp3_output)
                     stems["lead_vocals"] = final_path
-                    print(f"  ✅ lead_vocals: {final_path}")
+                    logger.info("  lead_vocals: %s", final_path)
 
-            print(f"  ✅ Pass 3 완료")
+            logger.info("  Pass 3 완료")
 
             # ═══ Pass 4/4: DrumSep 드럼 세분화 ═══
             if progress_cb:
                 progress_cb("Pass 4/4: DrumSep 드럼 세분화 (Kick/Snare/Toms/Cymbals)...")
-            print(f"🥁 Pass 4/4: DrumSep 드럼 세분화")
+            logger.info("Pass 4/4: DrumSep 드럼 세분화")
 
             pass4_dir = os.path.join(work_dir, "pass4")
             os.makedirs(pass4_dir)
@@ -481,7 +484,7 @@ class DemucsService:
                         final_path = os.path.join(output_dir, f"{stem_name}{ext}")
                         self._convert_audio(full, final_path, mp3_output)
                         stems[stem_name] = final_path
-                        print(f"  ✅ {stem_name}: {final_path}")
+                        logger.info("  %s: %s", stem_name, final_path)
                         matched = True
                         break
                 if not matched:
@@ -494,9 +497,9 @@ class DemucsService:
                 cymbals_path = os.path.join(output_dir, f"cymbals{ext}")
                 self._merge_audio_files(cymbal_parts, cymbals_path, mp3_output)
                 stems["cymbals"] = cymbals_path
-                print(f"  ✅ cymbals (hh+ride+crash 합산): {cymbals_path}")
+                logger.info("  cymbals (hh+ride+crash 합산): %s", cymbals_path)
 
-            print(f"  ✅ Pass 4 완료")
+            logger.info("  Pass 4 완료")
 
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -518,7 +521,7 @@ class DemucsService:
                 fmt = "mp3" if to_mp3 and dst.endswith(".mp3") else "wav"
                 combined.export(dst, format=fmt, bitrate="320k" if fmt == "mp3" else None)
         except (ImportError, IOError, ValueError) as e:
-            print(f"  ⚠️ 오디오 병합 실패 ({type(e).__name__}): {e}")
+            logger.warning("오디오 병합 실패 (%s): %s", type(e).__name__, e)
             if sources:
                 shutil.copy2(sources[0], dst)
 
@@ -531,7 +534,7 @@ class DemucsService:
                 audio.export(dst, format="mp3", bitrate="320k")
                 return
             except (ImportError, IOError, ValueError) as e:
-                print(f"  ⚠️ MP3 변환 실패, WAV 복사 ({type(e).__name__}): {e}")
+                logger.warning("MP3 변환 실패, WAV 복사 (%s): %s", type(e).__name__, e)
         shutil.copy2(src, dst)
 
     # ──────────────────────────────────────────
@@ -553,5 +556,5 @@ class DemucsService:
                 waveform = waveform / max_val
             return waveform.tolist()
         except (RuntimeError, IOError, ValueError) as e:
-            print(f"⚠️ 파형 추출 오류 ({type(e).__name__}): {e}")
+            logger.warning("파형 추출 오류 (%s): %s", type(e).__name__, e)
             return []
