@@ -32,17 +32,38 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS 설정
+# CORS 설정 — 허용 도메인을 명시적으로 제한 (ISMS-P 준수)
+ALLOWED_ORIGINS = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "*"],
+    allow_origins=[o.strip() for o in ALLOWED_ORIGINS if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # 서비스 인스턴스
 demucs_service = DemucsService()
+
+
+def _sanitize_filename(filename: str) -> str:
+    """파일명에서 경로 순회 문자 제거 — 순수 파일명만 허용"""
+    name = Path(filename).name  # 디렉토리 경로 제거
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise HTTPException(status_code=400, detail="잘못된 파일명입니다")
+    return name
+
+
+def _safe_resolve(base_dir: Path, *parts: str) -> Path:
+    """base_dir 범위 안의 경로인지 검증 — 경로 순회 공격 방지"""
+    resolved = (base_dir / Path(*parts)).resolve()
+    if not str(resolved).startswith(str(base_dir.resolve())):
+        raise HTTPException(status_code=400, detail="잘못된 경로 접근입니다")
+    return resolved
 
 # 작업 저장소 (실제 서비스에서는 Redis 등 사용)
 jobs: Dict[str, dict] = {}
@@ -113,41 +134,104 @@ async def get_system_info():
     )
 
 
+# 업로드 제한 상수
+MAX_UPLOAD_SIZE = int(os.environ.get("MAX_UPLOAD_SIZE", 200 * 1024 * 1024))  # 기본 200MB
+
+ALLOWED_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
+
+# Magic number (파일 헤더) 시그니처 — 참고: https://en.wikipedia.org/wiki/List_of_file_signatures
+AUDIO_MAGIC = {
+    b"\xff\xfb": ".mp3",       # MP3 (MPEG Layer 3, 0xFFFB)
+    b"\xff\xf3": ".mp3",       # MP3 (MPEG Layer 3, 0xFFF3)
+    b"\xff\xf2": ".mp3",       # MP3 (MPEG Layer 3, 0xFFF2)
+    b"ID3":      ".mp3",       # MP3 with ID3 tag
+    b"RIFF":     ".wav",       # WAV
+    b"fLaC":     ".flac",      # FLAC
+    b"OggS":     ".ogg",       # OGG
+}
+# M4A/MP4 컨테이너는 offset 4에 "ftyp" 시그니처
+M4A_FTYP_OFFSET = 4
+
+
+def _validate_audio_magic(header: bytes, ext: str) -> bool:
+    """파일 헤더(Magic number)로 오디오 형식 검증"""
+    if ext == ".m4a":
+        return len(header) >= 8 and header[4:8] == b"ftyp"
+    for magic, expected_ext in AUDIO_MAGIC.items():
+        if header[: len(magic)] == magic and expected_ext == ext:
+            return True
+    return False
+
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """오디오 파일 업로드"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="파일명이 없습니다")
-    
+
     # 확장자 검증
-    allowed_extensions = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
     ext = Path(file.filename).suffix.lower()
-    if ext not in allowed_extensions:
+    if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
-            status_code=400, 
-            detail=f"지원하지 않는 형식입니다. 지원: {', '.join(allowed_extensions)}"
+            status_code=400,
+            detail=f"지원하지 않는 형식입니다. 지원: {', '.join(ALLOWED_EXTENSIONS)}",
         )
-    
+
+    # MIME 타입 검증
+    allowed_mimes = {
+        "audio/mpeg", "audio/wav", "audio/x-wav", "audio/wave",
+        "audio/flac", "audio/x-flac", "audio/ogg",
+        "audio/mp4", "audio/x-m4a", "audio/aac",
+        "application/octet-stream",  # 일부 클라이언트가 fallback으로 보냄
+    }
+    if file.content_type and file.content_type not in allowed_mimes:
+        raise HTTPException(status_code=400, detail="허용되지 않는 MIME 타입입니다")
+
+    # 파일 크기 제한 — 청크 단위로 읽어 메모리 폭발 방지
+    chunks = []
+    total_size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1MB 청크
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"파일이 너무 큽니다. 최대 {MAX_UPLOAD_SIZE // (1024*1024)}MB까지 허용됩니다",
+            )
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
+
+    if total_size == 0:
+        raise HTTPException(status_code=400, detail="빈 파일입니다")
+
+    # Magic number 검증 — 확장자와 실제 파일 헤더 일치 확인
+    if not _validate_audio_magic(content[:16], ext):
+        raise HTTPException(
+            status_code=400,
+            detail="파일 내용이 확장자와 일치하지 않습니다. 유효한 오디오 파일인지 확인해주세요.",
+        )
+
     # 파일 저장
     file_id = str(uuid.uuid4())
     file_dir = OUTPUT_DIR / file_id
     file_dir.mkdir(exist_ok=True)
-    
+
     file_path = file_dir / f"original{ext}"
-    
+
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
-    
+
     # 오디오 정보 추출
     duration = demucs_service.get_audio_duration(str(file_path))
-    
+
     return {
         "file_id": file_id,
         "filename": file.filename,
         "duration": duration,
-        "size": len(content),
-        "path": str(file_path)
+        "size": total_size,
     }
 
 
@@ -158,7 +242,8 @@ async def split_stems(
     background_tasks: BackgroundTasks
 ):
     """STEM 분리 작업 시작"""
-    file_dir = OUTPUT_DIR / file_id
+    _sanitize_filename(file_id)
+    file_dir = _safe_resolve(OUTPUT_DIR, file_id)
     
     # 원본 파일 찾기
     original_file = None
@@ -284,7 +369,10 @@ async def process_split_job(
                     log=f"✅ 모든 작업 완료 ({len(result_stems)}개 스템 + 스펙트로그램)")
         
     except Exception as e:
-        _update_job(job_id, status="failed", progress=0, message=f"오류: {str(e)}")
+        print(f"❌ STEM 분리 실패 (job_id={job_id}): {e}")
+        _update_job(job_id, status="failed", progress=0,
+                    message="처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                    log=f"❌ 오류 발생: {type(e).__name__}")
 
 
 @app.get("/api/job/{job_id}", response_model=JobStatus)
@@ -473,7 +561,7 @@ def parse_mixing_prompt(prompt: str, total_duration: float = 180,
             continue
 
         found_instrument = None
-        for kr_name, en_name in INSTRUMENT_MAP.items():
+        for kr_name, en_name in sorted(INSTRUMENT_MAP.items(), key=lambda x: len(x[0]), reverse=True):
             if kr_name in line and en_name in available_stems:
                 found_instrument = en_name
                 break
@@ -497,7 +585,7 @@ def parse_mixing_prompt(prompt: str, total_duration: float = 180,
                     break
 
         volume_db = 0.0
-        for action, db in VOLUME_ACTION_MAP.items():
+        for action, db in sorted(VOLUME_ACTION_MAP.items(), key=lambda x: len(x[0]), reverse=True):
             if action in line:
                 volume_db = float(db)
                 break
@@ -607,7 +695,8 @@ async def mix_stems_api(job_id: str, request: MixRequest):
             "stream_url": f"/api/stream-mix/{job_id}/{mix_id}",
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ 믹싱 실패 (job_id={job_id}): {e}")
+        raise HTTPException(status_code=500, detail="믹싱 처리 중 오류가 발생했습니다")
 
 
 @app.post("/api/parse-prompt/{job_id}")
@@ -682,7 +771,8 @@ async def get_spectrogram(job_id: str, stem_name: str):
 @app.get("/api/spectrogram-original/{file_id}")
 async def get_original_spectrogram(file_id: str):
     """원본 파일의 스펙트로그램 이미지 생성 및 반환"""
-    file_dir = OUTPUT_DIR / file_id
+    _sanitize_filename(file_id)
+    file_dir = _safe_resolve(OUTPUT_DIR, file_id)
     
     original_file = None
     for ext in [".mp3", ".wav", ".flac", ".ogg", ".m4a"]:
@@ -794,8 +884,8 @@ async def delete_job(job_id: str):
             try:
                 if os.path.exists(stem_info["path"]):
                     os.remove(stem_info["path"])
-            except:
-                pass
+            except OSError as e:
+                print(f"⚠️ 스템 파일 삭제 실패: {e}")
     
     del jobs[job_id]
     return {"message": "삭제 완료"}
@@ -933,11 +1023,12 @@ async def list_prompt_history():
 @app.delete("/api/prompt-history/{filename}")
 async def delete_prompt_history(filename: str):
     """프롬프트 히스토리 삭제"""
-    filepath = HISTORY_DIR / filename
+    safe_name = _sanitize_filename(filename)
+    filepath = _safe_resolve(HISTORY_DIR, safe_name)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
     filepath.unlink()
-    return {"message": f"삭제됨: {filename}"}
+    return {"message": f"삭제됨: {safe_name}"}
 
 
 if __name__ == "__main__":

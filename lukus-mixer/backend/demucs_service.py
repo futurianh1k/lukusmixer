@@ -138,20 +138,19 @@ class DemucsService:
             pass
 
     def get_audio_duration(self, audio_path: str) -> float:
-        """오디오 길이 반환 (초)"""
+        """오디오 길이 반환 (초) — librosa.get_duration 우선, fallback으로 pydub"""
         if self.librosa_available:
             try:
                 import librosa
-                y, sr = librosa.load(audio_path, sr=None)
-                return len(y) / sr
-            except:
-                pass
+                return librosa.get_duration(path=audio_path)
+            except Exception as e:
+                print(f"⚠️ librosa duration 실패: {e}")
         try:
             from pydub import AudioSegment
             audio = AudioSegment.from_file(audio_path)
             return len(audio) / 1000.0
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ pydub duration 실패: {e}")
         return 0
 
     # ──────────────────────────────────────────
@@ -518,8 +517,8 @@ class DemucsService:
             if combined:
                 fmt = "mp3" if to_mp3 and dst.endswith(".mp3") else "wav"
                 combined.export(dst, format=fmt, bitrate="320k" if fmt == "mp3" else None)
-        except Exception as e:
-            print(f"  ⚠️ 오디오 병합 실패: {e}")
+        except (ImportError, IOError, ValueError) as e:
+            print(f"  ⚠️ 오디오 병합 실패 ({type(e).__name__}): {e}")
             if sources:
                 shutil.copy2(sources[0], dst)
 
@@ -531,8 +530,8 @@ class DemucsService:
                 audio = AudioSegment.from_file(src)
                 audio.export(dst, format="mp3", bitrate="320k")
                 return
-            except Exception as e:
-                print(f"  ⚠️ MP3 변환 실패, WAV 복사: {e}")
+            except (ImportError, IOError, ValueError) as e:
+                print(f"  ⚠️ MP3 변환 실패, WAV 복사 ({type(e).__name__}): {e}")
         shutil.copy2(src, dst)
 
     # ──────────────────────────────────────────
@@ -553,6 +552,6 @@ class DemucsService:
             if max_val > 0:
                 waveform = waveform / max_val
             return waveform.tolist()
-        except Exception as e:
-            print(f"파형 추출 오류: {e}")
+        except (RuntimeError, IOError, ValueError) as e:
+            print(f"⚠️ 파형 추출 오류 ({type(e).__name__}): {e}")
             return []
