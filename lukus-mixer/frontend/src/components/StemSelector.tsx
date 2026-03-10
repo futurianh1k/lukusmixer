@@ -1,7 +1,15 @@
 import React from 'react';
-import { Mic2, Drum, Guitar, Piano, Waves, Music } from 'lucide-react';
+import { Mic2, Drum, Guitar, Piano, Waves, Music, LucideIcon } from 'lucide-react';
+import type { StemSelectorProps } from '../types/api';
 
-const STEM_CONFIG = {
+interface StemConfig {
+  label: string;
+  color: string;
+  textColor: string;
+  icon: LucideIcon;
+}
+
+const STEM_CONFIG: Record<string, StemConfig> = {
   vocals: { label: 'Vocals', color: 'bg-green-500', textColor: 'text-green-400', icon: Mic2 },
   lead_vocals: { label: 'Lead Vocals', color: 'bg-green-500', textColor: 'text-green-400', icon: Mic2 },
   backing_vocals: { label: 'Backing Vocals', color: 'bg-emerald-500', textColor: 'text-emerald-400', icon: Mic2 },
@@ -20,10 +28,9 @@ const STEM_CONFIG = {
   other: { label: 'Other', color: 'bg-slate-500', textColor: 'text-slate-400', icon: Music },
 };
 
-function StemSelector({ availableStems, selectedStems, onChange }) {
-  const toggleStem = (stem) => {
+function StemSelector({ availableStems, selectedStems, onChange }: StemSelectorProps): React.ReactElement {
+  const toggleStem = (stem: string): void => {
     if (selectedStems.includes(stem)) {
-      // 최소 1개는 선택되어야 함
       if (selectedStems.length > 1) {
         onChange(selectedStems.filter(s => s !== stem));
       }
@@ -32,13 +39,12 @@ function StemSelector({ availableStems, selectedStems, onChange }) {
     }
   };
 
-  const selectAll = () => {
+  const selectAll = (): void => {
     onChange([...availableStems]);
   };
 
   return (
     <div>
-      {/* Select All 버튼 */}
       <div className="flex justify-end mb-3">
         <button 
           onClick={selectAll}
@@ -48,7 +54,6 @@ function StemSelector({ availableStems, selectedStems, onChange }) {
         </button>
       </div>
 
-      {/* 스템 태그들 */}
       <div className="flex flex-wrap gap-2">
         {availableStems.map(stem => {
           const config = STEM_CONFIG[stem];
@@ -73,7 +78,6 @@ function StemSelector({ availableStems, selectedStems, onChange }) {
           );
         })}
       </div>
-
     </div>
   );
 }

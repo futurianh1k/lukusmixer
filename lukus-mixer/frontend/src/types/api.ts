@@ -5,6 +5,12 @@
  * .jsx → .tsx 점진적 마이그레이션 시 이 타입들을 import하여 사용.
  */
 
+import type { ReactNode, RefObject, MutableRefObject } from 'react';
+
+// ────────────────────────────────────────────
+// API 응답 타입
+// ────────────────────────────────────────────
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -35,9 +41,11 @@ export interface StemResult {
   spectrogram: string | null;
 }
 
+export type JobStatusType = 'pending' | 'processing' | 'completed' | 'failed';
+
 export interface JobStatus {
   job_id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: JobStatusType;
   progress: number;
   message: string;
   result: Record<string, StemResult> | null;
@@ -76,9 +84,116 @@ export interface ExpandedMix {
 export interface WsJobUpdate {
   type: 'job_update';
   job_id: string;
-  status: JobStatus['status'];
+  status: JobStatusType;
   progress: number;
   message: string;
   result: Record<string, StemResult> | null;
   logs: string[] | null;
+}
+
+// ────────────────────────────────────────────
+// 컴포넌트 Props 타입
+// ────────────────────────────────────────────
+
+export interface ErrorBoundaryProps {
+  name?: string;
+  children: ReactNode;
+}
+
+export interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export type AudioPlayerColor = 'lukus' | 'green' | 'orange' | 'purple' | 'cyan' | 'pink' | 'slate' | 'emerald' | 'amber' | 'violet' | 'fuchsia' | 'yellow' | 'lime';
+
+export interface AudioPlayerProps {
+  url: string;
+  title: string;
+  duration?: number;
+  color?: AudioPlayerColor;
+  onTimeUpdate?: (time: number) => void;
+  externalAudioRef?: ((el: HTMLAudioElement | null) => void) | RefObject<HTMLAudioElement | null>;
+  children?: ReactNode;
+}
+
+export interface FileUploadProps {
+  onUpload: (file: File) => void;
+  uploadedFile: UploadedFile | null;
+  onRemove?: () => void;
+}
+
+export interface StemSelectorProps {
+  availableStems: string[];
+  selectedStems: string[];
+  onChange: (stems: string[]) => void;
+}
+
+export interface MixingPanelProps {
+  results: Record<string, StemResult> | null;
+  jobId: string | null;
+  duration?: number;
+  onAddToLibrary?: (mixId?: string) => void;
+  originalFilename?: string;
+  externalPromptAppend?: { text: string; id: number } | null;
+  onExpandMixResult?: (mix: ExpandedMix) => void;
+}
+
+export interface ResultPanelProps {
+  results: Record<string, StemResult> | null;
+  jobId: string | null;
+  uploadedFile: UploadedFile | null;
+  onDownload: (stemName: string) => void;
+  onDownloadAll: () => void;
+  onAddToLibrary?: (mixId?: string) => void;
+  selectedStems?: string[];
+  onAppendPrompt?: (text: string) => void;
+  expandedMix?: ExpandedMix | null;
+  onCloseExpandedMix?: () => void;
+}
+
+export interface SpectrogramProps {
+  src: string;
+  label: string;
+  stemName: string;
+  height: number;
+  currentTime?: number;
+  duration?: number;
+  onSeek?: (time: number) => void;
+  onAppendPrompt?: (text: string) => void;
+}
+
+// ────────────────────────────────────────────
+// WebSocket 훅 타입
+// ────────────────────────────────────────────
+
+export interface UseJobWebSocketCallbacks {
+  onUpdate?: (data: WsJobUpdate) => void;
+  onComplete?: (data: WsJobUpdate) => void;
+  onFailed?: (data: WsJobUpdate) => void;
+}
+
+export interface UseJobWebSocketReturn {
+  usingFallback: boolean;
+}
+
+// ────────────────────────────────────────────
+// 유틸리티 타입
+// ────────────────────────────────────────────
+
+export interface VolumeOption {
+  label: string;
+  action: string;
+  db: number;
+}
+
+export interface HistoryItem {
+  filename: string;
+  prompt: string;
+  created_at: string;
+  size: number;
+}
+
+export interface PromptHistoryResponse {
+  items: HistoryItem[];
 }

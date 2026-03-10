@@ -1,9 +1,23 @@
 import React, { useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
-import { Upload, Music, X, FileAudio } from 'lucide-react';
+import { useDropzone, type FileRejection } from 'react-dropzone';
+import { Upload, X, FileAudio } from 'lucide-react';
+import type { FileUploadProps } from '../types/api';
 
-function FileUpload({ onUpload, uploadedFile, onRemove }) {
-  const onDrop = useCallback((acceptedFiles) => {
+function formatDuration(seconds: number | undefined): string {
+  if (!seconds) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function formatFileSize(bytes: number | undefined): string {
+  if (!bytes) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(1)} MB`;
+}
+
+function FileUpload({ onUpload, uploadedFile, onRemove }: FileUploadProps): React.ReactElement {
+  const onDrop = useCallback((acceptedFiles: File[], _rejections: FileRejection[]) => {
     if (acceptedFiles.length > 0) {
       onUpload(acceptedFiles[0]);
     }
@@ -17,7 +31,6 @@ function FileUpload({ onUpload, uploadedFile, onRemove }) {
     maxFiles: 1
   });
 
-  // 파일이 업로드된 경우
   if (uploadedFile) {
     return (
       <div className="bg-dark-800 rounded-xl p-4">
@@ -45,7 +58,6 @@ function FileUpload({ onUpload, uploadedFile, onRemove }) {
     );
   }
 
-  // 업로드 드롭존
   return (
     <div
       {...getRootProps()}
@@ -68,20 +80,6 @@ function FileUpload({ onUpload, uploadedFile, onRemove }) {
       </div>
     </div>
   );
-}
-
-// 유틸리티 함수
-function formatDuration(seconds) {
-  if (!seconds) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
-function formatFileSize(bytes) {
-  if (!bytes) return '0 MB';
-  const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(1)} MB`;
 }
 
 export default FileUpload;

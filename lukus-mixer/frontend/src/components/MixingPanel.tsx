@@ -1,12 +1,20 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import { Mic2, Drum, Guitar, Piano, Waves, Music, Volume2, VolumeX, Play, Loader2, Download, Plus, Trash2, Save, History, X, Clock, Maximize2 } from 'lucide-react';
+import { Mic2, Drum, Guitar, Piano, Waves, Music, Volume2, VolumeX, Play, Loader2, Download, Plus, Trash2, Save, History, X, Clock, Maximize2, LucideIcon } from 'lucide-react';
 import AudioPlayer from './AudioPlayer';
 import axios from 'axios';
+import type { MixingPanelProps, MixCommand, HistoryItem, ExpandedMix, AudioPlayerColor } from '../types/api';
 
 const API_BASE = '/api';
 
-const STEM_CONFIG = {
+interface StemConfigItem {
+  label: string;
+  en: string;
+  icon: LucideIcon;
+  color: AudioPlayerColor;
+}
+
+const STEM_CONFIG: Record<string, StemConfigItem> = {
   vocals:         { label: '보컬', en: 'Vocals', icon: Mic2,   color: 'green' },
   lead_vocals:    { label: '리드보컬', en: 'Lead Vocals', icon: Mic2,   color: 'green' },
   backing_vocals: { label: '백킹보컬', en: 'Backing Vocals', icon: Mic2, color: 'green' },
@@ -25,7 +33,12 @@ const STEM_CONFIG = {
   other:          { label: '기타악기', en: 'Other', icon: Music, color: 'slate' },
 };
 
-const VOLUME_PRESETS = [
+interface VolumePreset {
+  label: string;
+  db: number;
+}
+
+const VOLUME_PRESETS: VolumePreset[] = [
   { label: '최대 (+12dB)',     db: 12 },
   { label: '매우 크게 (+9dB)', db: 9 },
   { label: '크게 (+6dB)',      db: 6 },
@@ -38,20 +51,35 @@ const VOLUME_PRESETS = [
   { label: '음소거',           db: -100 },
 ];
 
-function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilename, externalPromptAppend, onExpandMixResult }) {
+function formatTime(seconds: number | undefined): string {
+  if (!seconds || !isFinite(seconds)) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function MixingPanel({ 
+  results, 
+  jobId, 
+  duration, 
+  onAddToLibrary, 
+  originalFilename, 
+  externalPromptAppend, 
+  onExpandMixResult 
+}: MixingPanelProps): React.ReactElement {
   const [selectedInstrument, setSelectedInstrument] = useState('');
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(15);
   const [volumePreset, setVolumePreset] = useState(6);
   const [prompt, setPrompt] = useState('');
-  const [parsedCommands, setParsedCommands] = useState([]);
+  const [parsedCommands, setParsedCommands] = useState<MixCommand[]>([]);
   const [isMixing, setIsMixing] = useState(false);
   const [mixProgress, setMixProgress] = useState(0);
-  const [mixResult, setMixResult] = useState(null);
-  const [mixId, setMixId] = useState(null);
+  const [mixResult, setMixResult] = useState<string | null>(null);
+  const [mixId, setMixId] = useState<string | null>(null);
   const [mixLog, setMixLog] = useState('');
   const [showHistory, setShowHistory] = useState(false);
-  const [historyItems, setHistoryItems] = useState([]);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [lastAppendId, setLastAppendId] = useState(0);
 
@@ -68,7 +96,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
 
   const maxDuration = duration || 180;
 
-  const clearPrompt = () => {
+  const clearPrompt = (): void => {
     setPrompt('');
     setParsedCommands([]);
     setMixResult(null);
@@ -77,39 +105,39 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
     setMixProgress(0);
   };
 
-  const loadHistory = async () => {
+  const loadHistory = async (): Promise<void> => {
     try {
-      const res = await axios.get(`${API_BASE}/prompt-history`);
+      const res = await axios.get<{ items: HistoryItem[] }>(`${API_BASE}/prompt-history`);
       setHistoryItems(res.data.items || []);
     } catch (err) {
       console.error('히스토리 로드 실패:', err);
     }
   };
 
-  const savePromptToHistory = async () => {
+  const savePromptToHistory = async (): Promise<void> => {
     if (!prompt.trim()) return;
     setSavingPrompt(true);
     try {
-      const res = await axios.post(`${API_BASE}/prompt-history/save`, {
+      const res = await axios.post<{ message: string }>(`${API_BASE}/prompt-history/save`, {
         prompt: prompt.trim(),
         original_filename: originalFilename || 'prompt',
         mix_result_info: mixLog || '',
       });
       toast.success(res.data.message);
       loadHistory();
-    } catch (err) {
+    } catch (err: any) {
       toast.error('저장 실패: ' + (err.response?.data?.detail || err.message));
     } finally {
       setSavingPrompt(false);
     }
   };
 
-  const loadPromptFromHistory = (item) => {
+  const loadPromptFromHistory = (item: HistoryItem): void => {
     setPrompt(item.prompt);
     setShowHistory(false);
   };
 
-  const deleteHistoryItem = async (filename, e) => {
+  const deleteHistoryItem = async (filename: string, e: React.MouseEvent): Promise<void> => {
     e.stopPropagation();
     if (!confirm(`"${filename}" 를 삭제하시겠습니까?`)) return;
     try {
@@ -124,14 +152,14 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
     if (showHistory) loadHistory();
   }, [showHistory]);
 
-  const addToPrompt = () => {
+  const addToPrompt = (): void => {
     if (!selectedInstrument) return;
     const cfg = STEM_CONFIG[selectedInstrument];
     const krName = cfg?.label || selectedInstrument;
     const preset = VOLUME_PRESETS.find(p => p.db === volumePreset);
     const actionText = preset?.label.split('(')[0].trim() || '';
 
-    let line;
+    let line: string;
     if (startSec === 0 && endSec >= maxDuration) {
       line = `${krName} ${actionText}`;
     } else {
@@ -140,17 +168,17 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
     setPrompt(prev => prev ? prev + '\n' + line : line);
   };
 
-  const handleParsePreview = async () => {
+  const handleParsePreview = async (): Promise<void> => {
     if (!prompt.trim() || !jobId) return;
     try {
-      const res = await axios.post(`${API_BASE}/parse-prompt/${jobId}`, { prompt });
+      const res = await axios.post<{ commands: MixCommand[] }>(`${API_BASE}/parse-prompt/${jobId}`, { prompt });
       setParsedCommands(res.data.commands);
     } catch (err) {
       console.error('파싱 오류:', err);
     }
   };
 
-  const handleMix = async () => {
+  const handleMix = async (): Promise<void> => {
     if (!prompt.trim() || !jobId) return;
     setIsMixing(true);
     setMixResult(null);
@@ -159,7 +187,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
 
     try {
       setMixProgress(30);
-      const res = await axios.post(`${API_BASE}/mix/${jobId}`, { prompt });
+      const res = await axios.post<{ commands: MixCommand[]; stream_url: string; mix_id: string }>(`${API_BASE}/mix/${jobId}`, { prompt });
       setMixProgress(90);
       setParsedCommands(res.data.commands);
       setMixResult(res.data.stream_url);
@@ -169,7 +197,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
         `  • ${STEM_CONFIG[c.instrument]?.label || c.instrument}: ${c.start_sec.toFixed(0)}~${c.end_sec.toFixed(0)}초, ${c.volume_db > 0 ? '+' : ''}${c.volume_db}dB`
       ).join('\n');
       setMixLog(`✅ AI 믹싱 완료!\n\n파싱된 명령 (${res.data.commands.length}개):\n${cmdSummary}`);
-    } catch (err) {
+    } catch (err: any) {
       const detail = err.response?.data?.detail || err.message;
       setMixProgress(0);
       setMixLog(`❌ 오류: ${detail}`);
@@ -202,7 +230,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
             const cfg = STEM_CONFIG[stem];
             const Icon = cfg?.icon || Music;
             const isSelected = selectedInstrument === stem;
-            const colorClass = {
+            const colorClass: Record<string, string> = {
               green: 'bg-green-500/20 text-green-400 border-green-500/50',
               orange: 'bg-orange-500/20 text-orange-400 border-orange-500/50',
               purple: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
@@ -214,7 +242,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
               emerald: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50',
               fuchsia: 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/50',
               slate: 'bg-slate-500/20 text-slate-400 border-slate-500/50',
-            }[cfg?.color || 'slate'];
+            };
 
             return (
               <button
@@ -222,7 +250,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
                 onClick={() => setSelectedInstrument(stem)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
                   border transition-all
-                  ${isSelected ? `${colorClass} ring-1 ring-white/30` : 'bg-dark-800 text-dark-400 border-dark-700 hover:border-dark-500'}`}
+                  ${isSelected ? `${colorClass[cfg?.color || 'slate']} ring-1 ring-white/30` : 'bg-dark-800 text-dark-400 border-dark-700 hover:border-dark-500'}`}
               >
                 <Icon className="w-3.5 h-3.5" />
                 {cfg?.label || stem}
@@ -526,10 +554,10 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
               믹싱 결과
             </h3>
             <button
-              onClick={() => onExpandMixResult && onExpandMixResult({
+              onClick={() => onExpandMixResult && mixId && jobId && onExpandMixResult({
                 url: mixResult,
                 title: 'Mixed Result',
-                duration,
+                duration: duration || 0,
                 jobId,
                 mixId,
               })}
@@ -555,7 +583,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
               다운로드
             </button>
             <button
-              onClick={() => onAddToLibrary && onAddToLibrary(mixId)}
+              onClick={() => onAddToLibrary && onAddToLibrary(mixId || undefined)}
               className="flex-1 py-2 bg-dark-700 hover:bg-dark-600 text-white text-xs
                          rounded-lg transition-colors flex items-center justify-center gap-1.5"
             >
@@ -567,13 +595,6 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
       )}
     </div>
   );
-}
-
-function formatTime(seconds) {
-  if (!seconds || !isFinite(seconds)) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 export default MixingPanel;

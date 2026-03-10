@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Download, Upload, Plus, MoreHorizontal, FileAudio, ZoomIn, ZoomOut, X, Volume2, VolumeX, Minimize2, Music } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, type MutableRefObject } from 'react';
+import { Download, Upload, Plus, FileAudio, ZoomIn, ZoomOut, X, Volume2, VolumeX, Minimize2, Music } from 'lucide-react';
 import AudioPlayer from './AudioPlayer';
+import type { ResultPanelProps, SpectrogramProps, StemResult, ExpandedMix, VolumeOption, AudioPlayerColor } from '../types/api';
 
-const STEM_COLORS = {
+const STEM_COLORS: Record<string, AudioPlayerColor> = {
   vocals: 'green', lead_vocals: 'green', backing_vocals: 'emerald',
   drums: 'orange', kick: 'orange', snare: 'amber', toms: 'yellow', cymbals: 'lime',
   bass: 'purple',
@@ -12,7 +13,7 @@ const STEM_COLORS = {
   other: 'slate',
 };
 
-const STEM_LABELS = {
+const STEM_LABELS: Record<string, string> = {
   vocals: 'Vocals', lead_vocals: 'Lead Vocals', backing_vocals: 'Backing Vocals',
   drums: 'Drums', kick: 'Kick', snare: 'Snare', toms: 'Toms', cymbals: 'Cymbals',
   bass: 'Bass', guitar: 'Guitar', piano: 'Piano',
@@ -20,7 +21,7 @@ const STEM_LABELS = {
   other: 'Other',
 };
 
-const STEM_KR = {
+const STEM_KR: Record<string, string> = {
   vocals: '보컬', lead_vocals: '리드보컬', backing_vocals: '백킹보컬',
   drums: '드럼', kick: '킥', snare: '스네어', toms: '탐', cymbals: '심벌즈',
   bass: '베이스', guitar: '기타', piano: '피아노',
@@ -29,15 +30,15 @@ const STEM_KR = {
   Original: '전체',
 };
 
-const STEM_GROUPS = {
+const STEM_GROUPS: Record<string, string> = {
   lead_vocals: 'vocals', backing_vocals: 'vocals',
   kick: 'drums', snare: 'drums', toms: 'drums', cymbals: 'drums',
   strings: 'banquet', brass: 'banquet', woodwinds: 'banquet', synthesizer: 'banquet',
 };
 
-const GROUP_LABELS = { vocals: 'Vocals', drums: 'Drums', banquet: 'Banquet (롱테일 악기)' };
+const GROUP_LABELS: Record<string, string> = { vocals: 'Vocals', drums: 'Drums', banquet: 'Banquet (롱테일 악기)' };
 
-const VOLUME_OPTIONS = [
+const VOLUME_OPTIONS: VolumeOption[] = [
   { label: '최대 (+12dB)', action: '최대로 크게', db: 12 },
   { label: '매우 크게 (+9dB)', action: '매우 크게', db: 9 },
   { label: '크게 (+6dB)', action: '크게', db: 6 },
@@ -49,21 +50,25 @@ const VOLUME_OPTIONS = [
   { label: '음소거', action: '음소거', db: -100 },
 ];
 
-const SPEC_HEIGHTS = { small: 50, normal: 80, large: 120 };
+const SPEC_HEIGHTS: Record<string, number> = { small: 50, normal: 80, large: 120 };
 
-function fmtTime(seconds) {
+function fmtTime(seconds: number | undefined): string {
   if (!seconds || !isFinite(seconds)) return '0:00';
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-// ────────────────────────────────────────────
-// 스펙트로그램 팝업 모달
-// ────────────────────────────────────────────
-function SpectrogramModal({ src, label, duration, onClose }) {
+interface SpectrogramModalProps {
+  src: string;
+  label: string;
+  duration?: number;
+  onClose: () => void;
+}
+
+function SpectrogramModal({ src, label, duration, onClose }: SpectrogramModalProps): React.ReactElement {
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -104,21 +109,25 @@ function SpectrogramModal({ src, label, duration, onClose }) {
   );
 }
 
-// ────────────────────────────────────────────
-// 플로팅 볼륨 메뉴
-// ────────────────────────────────────────────
-function FloatingVolumeMenu({ x, y, onSelect, onClose }) {
-  const ref = useRef(null);
+interface FloatingVolumeMenuProps {
+  x: number;
+  y: number;
+  onSelect: (opt: VolumeOption) => void;
+  onClose: () => void;
+}
+
+function FloatingVolumeMenu({ x, y, onSelect, onClose }: FloatingVolumeMenuProps): React.ReactElement {
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const onClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) onClose();
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
     window.addEventListener('mousedown', onClick);
     return () => window.removeEventListener('mousedown', onClick);
   }, [onClose]);
 
-  const menuStyle = {
+  const menuStyle: React.CSSProperties = {
     position: 'fixed',
     left: `${x}px`,
     top: `${y}px`,
@@ -152,22 +161,26 @@ function FloatingVolumeMenu({ x, y, onSelect, onClose }) {
   );
 }
 
-// ────────────────────────────────────────────
-// 스펙트로그램 컴포넌트
-// ────────────────────────────────────────────
-function Spectrogram({ src, label, stemName, height, currentTime, duration, onSeek, onAppendPrompt }) {
-  const imgRef = useRef(null);
-  const containerRef = useRef(null);
-  const clickTimerRef = useRef(null);
+interface FloatingMenuState {
+  x: number;
+  y: number;
+  start: number;
+  end: number;
+}
+
+function Spectrogram({ src, label, stemName, height, currentTime, duration, onSeek, onAppendPrompt }: SpectrogramProps): React.ReactElement | null {
+  const imgRef = useRef<HTMLImageElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
-  const [hoverPos, setHoverPos] = useState(null);
-  const [hoverTime, setHoverTime] = useState(null);
+  const [hoverPos, setHoverPos] = useState<number | null>(null);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [showModal, setShowModal] = useState(false);
 
-  const [selectStart, setSelectStart] = useState(null);
-  const [selectEnd, setSelectEnd] = useState(null);
-  const [floatingMenu, setFloatingMenu] = useState(null);
+  const [selectStart, setSelectStart] = useState<number | null>(null);
+  const [selectEnd, setSelectEnd] = useState<number | null>(null);
+  const [floatingMenu, setFloatingMenu] = useState<FloatingMenuState | null>(null);
 
   useEffect(() => {
     setLoaded(false);
@@ -186,7 +199,7 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
   const startPct = (selectStart != null && duration) ? (selectStart / duration) * 100 : null;
   const endPct = (selectEnd != null && duration) ? (selectEnd / duration) * 100 : null;
 
-  const handleMouseMove = (e) => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     if (!duration || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -200,14 +213,14 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
     setHoverTime(null);
   };
 
-  const getTimeFromEvent = (e) => {
+  const getTimeFromEvent = (e: React.MouseEvent): number | null => {
     if (!duration || !containerRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     return Math.max(0, Math.min(duration, (x / rect.width) * duration));
   };
 
-  const doSingleClick = (t, clientX) => {
+  const doSingleClick = (t: number, clientX: number) => {
     if (floatingMenu) return;
 
     if (selectStart == null) {
@@ -235,7 +248,7 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
     }
   };
 
-  const handleClick = (e) => {
+  const handleClick = (e: React.MouseEvent) => {
     const t = getTimeFromEvent(e);
     if (t == null) return;
     const cx = e.clientX;
@@ -246,7 +259,7 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
     }, 250);
   };
 
-  const handleDoubleClick = (e) => {
+  const handleDoubleClick = (e: React.MouseEvent) => {
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
@@ -258,7 +271,7 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
     setShowModal(true);
   };
 
-  const handleVolumeSelect = (opt) => {
+  const handleVolumeSelect = (opt: VolumeOption) => {
     if (onAppendPrompt && floatingMenu) {
       const kr = STEM_KR[stemName] || label;
       const line = `${Math.floor(floatingMenu.start)}초~${Math.floor(floatingMenu.end)}초 ${kr} ${opt.action}`;
@@ -302,7 +315,6 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
                draggable={false} />
         )}
 
-        {/* 선택 구간 하이라이트 */}
         {loaded && startPct != null && endPct != null && (
           <div className="absolute top-0 bottom-0 pointer-events-none z-[5]"
                style={{
@@ -314,24 +326,21 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
                }} />
         )}
 
-        {/* 시작점 마커 */}
         {loaded && startPct != null && (
           <div className="absolute top-0 pointer-events-none z-[15] bg-green-500/90 text-white text-[9px]
                          font-bold px-1 py-0.5 rounded-br-sm" style={{ left: `${startPct}%` }}>
-            S {fmtTime(selectStart)}
+            S {fmtTime(selectStart ?? undefined)}
           </div>
         )}
 
-        {/* 끝점 마커 */}
         {loaded && endPct != null && (
           <div className="absolute top-0 pointer-events-none z-[15] bg-red-500/90 text-white text-[9px]
                          font-bold px-1 py-0.5 rounded-bl-sm"
                style={{ left: `${endPct}%`, transform: 'translateX(-100%)' }}>
-            E {fmtTime(selectEnd)}
+            E {fmtTime(selectEnd ?? undefined)}
           </div>
         )}
 
-        {/* 시작점만 있을 때 안내 */}
         {loaded && selectStart != null && selectEnd == null && (
           <div className="absolute bottom-1 left-1/2 -translate-x-1/2 pointer-events-none z-[15]
                          bg-dark-800/90 text-dark-300 text-[9px] px-2 py-0.5 rounded">
@@ -339,7 +348,6 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
           </div>
         )}
 
-        {/* 재생 위치 플레이헤드 */}
         {loaded && playheadPct != null && playheadPct >= 0 && (
           <>
             <div className="absolute top-0 bottom-0 w-[2px] pointer-events-none z-10"
@@ -354,7 +362,6 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
           </>
         )}
 
-        {/* 호버 위치 표시 */}
         {loaded && hoverPos != null && (
           <>
             <div className="absolute top-0 bottom-0 w-[1px] pointer-events-none z-20"
@@ -363,13 +370,12 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
                            font-semibold px-1.5 py-0.5 rounded-t-sm"
                  style={{ left: `${hoverPos}%`,
                           transform: hoverPos > 90 ? 'translateX(-100%)' : 'translateX(-50%)' }}>
-              {fmtTime(hoverTime)}
+              {fmtTime(hoverTime ?? undefined)}
             </div>
           </>
         )}
       </div>
 
-      {/* 플로팅 볼륨 메뉴 */}
       {floatingMenu && (
         <FloatingVolumeMenu
           x={floatingMenu.x} y={floatingMenu.y}
@@ -377,7 +383,6 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
         />
       )}
 
-      {/* 팝업 모달 */}
       {showModal && (
         <SpectrogramModal
           src={src} label={label} duration={duration}
@@ -388,8 +393,22 @@ function Spectrogram({ src, label, stemName, height, currentTime, duration, onSe
   );
 }
 
+interface StemCardProps {
+  stemName: string;
+  stem: StemResult | undefined;
+  jobId: string;
+  specHeight: number;
+  stemTimes: Record<string, number>;
+  audioRefs: MutableRefObject<Record<string, HTMLAudioElement | null>>;
+  onDownload: (stemName: string) => void;
+  handleStemTimeUpdate: (stemName: string, time: number) => void;
+  handleSpecSeek: (stemName: string, time: number) => void;
+  onAppendPrompt?: (text: string) => void;
+  indent?: boolean;
+}
+
 function StemCard({ stemName, stem, jobId, specHeight, stemTimes, audioRefs,
-                    onDownload, handleStemTimeUpdate, handleSpecSeek, onAppendPrompt, indent }) {
+                    onDownload, handleStemTimeUpdate, handleSpecSeek, onAppendPrompt, indent }: StemCardProps): React.ReactElement {
   const color = STEM_COLORS[stemName] || 'slate';
   const label = STEM_LABELS[stemName] || stemName;
 
@@ -426,12 +445,37 @@ function StemCard({ stemName, stem, jobId, specHeight, stemTimes, audioRefs,
   );
 }
 
+interface StemGroupProps {
+  groupName: string;
+  stemNames: string[];
+  results: Record<string, StemResult>;
+  jobId: string;
+  specHeight: number;
+  stemTimes: Record<string, number>;
+  audioRefs: MutableRefObject<Record<string, HTMLAudioElement | null>>;
+  onDownload: (stemName: string) => void;
+  handleStemTimeUpdate: (stemName: string, time: number) => void;
+  handleSpecSeek: (stemName: string, time: number) => void;
+  onAppendPrompt?: (text: string) => void;
+  collapsedGroups: Record<string, boolean>;
+  toggleGroup: (groupName: string) => void;
+}
+
 function StemGroup({ groupName, stemNames, results, jobId, specHeight, stemTimes, audioRefs,
                      onDownload, handleStemTimeUpdate, handleSpecSeek, onAppendPrompt,
-                     collapsedGroups, toggleGroup }) {
+                     collapsedGroups, toggleGroup }: StemGroupProps): React.ReactElement {
   const isCollapsed = collapsedGroups[groupName];
   const groupLabel = GROUP_LABELS[groupName] || groupName;
-  const groupColorMap = {
+  
+  interface GroupColor {
+    border: string;
+    bg: string;
+    text: string;
+    hover: string;
+    dot: string;
+  }
+  
+  const groupColorMap: Record<string, GroupColor> = {
     vocals: { border: 'border-green-500/20', bg: 'bg-green-500/10', text: 'text-green-400', hover: 'hover:bg-green-500/15', dot: 'bg-green-400' },
     drums: { border: 'border-orange-500/20', bg: 'bg-orange-500/10', text: 'text-orange-400', hover: 'hover:bg-orange-500/15', dot: 'bg-orange-400' },
     banquet: { border: 'border-violet-500/20', bg: 'bg-violet-500/10', text: 'text-violet-400', hover: 'hover:bg-violet-500/15', dot: 'bg-violet-400' },
@@ -466,21 +510,39 @@ function StemGroup({ groupName, stemNames, results, jobId, specHeight, stemTimes
   );
 }
 
-function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, onAddToLibrary, selectedStems = [], onAppendPrompt, expandedMix, onCloseExpandedMix }) {
-  const [specSize, setSpecSize] = useState('normal');
-  const [stemTimes, setStemTimes] = useState({});
-  const [collapsedGroups, setCollapsedGroups] = useState({});
-  const audioRefs = useRef({});
+function formatDuration(seconds: number | undefined): string {
+  if (!seconds) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
 
-  const toggleGroup = useCallback((groupName) => {
+function ResultPanel({ 
+  results, 
+  jobId, 
+  uploadedFile, 
+  onDownload, 
+  onDownloadAll, 
+  onAddToLibrary, 
+  selectedStems = [], 
+  onAppendPrompt, 
+  expandedMix, 
+  onCloseExpandedMix 
+}: ResultPanelProps): React.ReactElement {
+  const [specSize, setSpecSize] = useState<'small' | 'normal' | 'large'>('normal');
+  const [stemTimes, setStemTimes] = useState<Record<string, number>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+
+  const toggleGroup = useCallback((groupName: string) => {
     setCollapsedGroups(prev => ({ ...prev, [groupName]: !prev[groupName] }));
   }, []);
 
-  const handleStemTimeUpdate = (stemName, time) => {
+  const handleStemTimeUpdate = (stemName: string, time: number) => {
     setStemTimes(prev => ({ ...prev, [stemName]: time }));
   };
 
-  const handleSpecSeek = (stemName, time) => {
+  const handleSpecSeek = (stemName: string, time: number) => {
     const audioEl = audioRefs.current[stemName];
     if (audioEl) {
       audioEl.currentTime = time;
@@ -512,14 +574,13 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
   const specHeight = SPEC_HEIGHTS[specSize];
 
   const cycleSize = () => {
-    const order = ['small', 'normal', 'large'];
+    const order: ('small' | 'normal' | 'large')[] = ['small', 'normal', 'large'];
     const idx = order.indexOf(specSize);
     setSpecSize(order[(idx + 1) % order.length]);
   };
 
   return (
     <div className="p-6">
-      {/* 헤더 */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-orange-500/20 rounded-lg flex items-center justify-center">
@@ -561,7 +622,6 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
         </div>
       </div>
 
-      {/* 원본 파일 + 스펙트로그램 */}
       {uploadedFile && (
         <div className="mb-6">
           <h3 className="text-sm font-semibold text-dark-300 mb-3">Original</h3>
@@ -589,7 +649,6 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
         </div>
       )}
 
-      {/* 확대된 Mix Result 플로팅 플레이어 */}
       {expandedMix && (
         <div className="mb-6 bg-gradient-to-r from-orange-500/10 to-orange-600/5 rounded-xl
                        border border-orange-500/30 p-4 shadow-lg shadow-orange-500/5
@@ -633,7 +692,6 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
         </div>
       )}
 
-      {/* 분리된 스템들 */}
       <div>
         <h3 className="text-sm font-semibold text-dark-300 mb-3">
           Separated Stems ({stemKeys.length})
@@ -643,18 +701,18 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
           {(() => {
             const hasGroups = stemKeys.some(s => STEM_GROUPS[s]);
 
-            if (!hasGroups) {
+            if (!hasGroups || !jobId) {
               return stemKeys.map(stemName => (
                 <StemCard key={stemName} stemName={stemName} stem={results[stemName]}
-                  jobId={jobId} specHeight={specHeight} stemTimes={stemTimes}
+                  jobId={jobId!} specHeight={specHeight} stemTimes={stemTimes}
                   audioRefs={audioRefs} onDownload={onDownload}
                   handleStemTimeUpdate={handleStemTimeUpdate}
                   handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt} />
               ));
             }
 
-            const grouped = {};
-            const standalone = [];
+            const grouped: Record<string, string[]> = {};
+            const standalone: string[] = [];
             stemKeys.forEach(s => {
               const g = STEM_GROUPS[s];
               if (g) {
@@ -666,13 +724,13 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
             });
 
             const groupOrder = ['vocals', 'drums', 'banquet'];
-            const rendered = [];
+            const rendered: React.ReactElement[] = [];
 
             groupOrder.forEach(gName => {
               if (!grouped[gName]) return;
               rendered.push(
                 <StemGroup key={gName} groupName={gName} stemNames={grouped[gName]}
-                  results={results} jobId={jobId} specHeight={specHeight}
+                  results={results} jobId={jobId!} specHeight={specHeight}
                   stemTimes={stemTimes} audioRefs={audioRefs} onDownload={onDownload}
                   handleStemTimeUpdate={handleStemTimeUpdate}
                   handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt}
@@ -683,7 +741,7 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
             standalone.forEach(stemName => {
               rendered.push(
                 <StemCard key={stemName} stemName={stemName} stem={results[stemName]}
-                  jobId={jobId} specHeight={specHeight} stemTimes={stemTimes}
+                  jobId={jobId!} specHeight={specHeight} stemTimes={stemTimes}
                   audioRefs={audioRefs} onDownload={onDownload}
                   handleStemTimeUpdate={handleStemTimeUpdate}
                   handleSpecSeek={handleSpecSeek} onAppendPrompt={onAppendPrompt} />
@@ -695,7 +753,6 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
         </div>
       </div>
 
-      {/* 하단 액션 */}
       <div className="mt-8 pt-6 border-t border-dark-700">
         <div className="flex items-center justify-between">
           <p className="text-sm text-dark-500">
@@ -712,13 +769,6 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
       </div>
     </div>
   );
-}
-
-function formatDuration(seconds) {
-  if (!seconds) return '0:00';
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 export default ResultPanel;

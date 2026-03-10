@@ -1,21 +1,56 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, type ReactNode, type RefObject } from 'react';
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react';
+import type { AudioPlayerProps, AudioPlayerColor } from '../types/api';
 
-function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTimeUpdate: onTimeUpdateCb, externalAudioRef, children }) {
-  const audioRef = useRef(null);
+interface ColorConfig {
+  bg: string;
+  track: string;
+  thumb: string;
+}
 
-  const setAudioRef = useCallback((el) => {
+const colorMap: Record<AudioPlayerColor, ColorConfig> = {
+  lukus: { bg: 'bg-lukus-500', track: '#22c55e', thumb: '#16a34a' },
+  green: { bg: 'bg-green-500', track: '#22c55e', thumb: '#16a34a' },
+  orange: { bg: 'bg-orange-500', track: '#f97316', thumb: '#ea580c' },
+  purple: { bg: 'bg-purple-500', track: '#8b5cf6', thumb: '#7c3aed' },
+  cyan: { bg: 'bg-cyan-500', track: '#06b6d4', thumb: '#0891b2' },
+  pink: { bg: 'bg-pink-500', track: '#ec4899', thumb: '#db2777' },
+  slate: { bg: 'bg-slate-500', track: '#64748b', thumb: '#475569' },
+  emerald: { bg: 'bg-emerald-500', track: '#10b981', thumb: '#059669' },
+  amber: { bg: 'bg-amber-500', track: '#f59e0b', thumb: '#d97706' },
+  violet: { bg: 'bg-violet-500', track: '#8b5cf6', thumb: '#7c3aed' },
+  fuchsia: { bg: 'bg-fuchsia-500', track: '#d946ef', thumb: '#c026d3' },
+  yellow: { bg: 'bg-yellow-500', track: '#eab308', thumb: '#ca8a04' },
+  lime: { bg: 'bg-lime-500', track: '#84cc16', thumb: '#65a30d' },
+};
+
+function AudioPlayer({ 
+  url, 
+  title, 
+  duration: propDuration, 
+  color = 'lukus', 
+  onTimeUpdate: onTimeUpdateCb, 
+  externalAudioRef, 
+  children 
+}: AudioPlayerProps): React.ReactElement {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const setAudioRef = useCallback((el: HTMLAudioElement | null) => {
     audioRef.current = el;
-    if (typeof externalAudioRef === 'function') externalAudioRef(el);
-    else if (externalAudioRef) externalAudioRef.current = el;
+    if (typeof externalAudioRef === 'function') {
+      externalAudioRef(el);
+    } else if (externalAudioRef && 'current' in externalAudioRef) {
+      (externalAudioRef as React.MutableRefObject<HTMLAudioElement | null>).current = el;
+    }
   }, [externalAudioRef]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(propDuration || 0);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const volumeTimerRef = useRef(null);
+  const volumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (propDuration) setDuration(propDuration);
@@ -45,7 +80,7 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
     };
-  }, [url]);
+  }, [url, onTimeUpdateCb]);
 
   const togglePlay = () => {
     const audio = audioRef.current;
@@ -62,7 +97,7 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
     setIsMuted(newMuted);
   };
 
-  const handleTimeSeek = (e) => {
+  const handleTimeSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current;
     if (!audio || !duration) return;
     const newTime = parseFloat(e.target.value);
@@ -71,7 +106,7 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
     if (onTimeUpdateCb) onTimeUpdateCb(newTime);
   };
 
-  const handleVolumeChange = (e) => {
+  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current;
     if (!audio) return;
     const newVol = parseFloat(e.target.value);
@@ -90,7 +125,7 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
     volumeTimerRef.current = setTimeout(() => setShowVolumeSlider(false), 400);
   }, []);
 
-  const formatTime = (seconds) => {
+  const formatTime = (seconds: number): string => {
     if (!seconds || !isFinite(seconds)) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -98,24 +133,14 @@ function AudioPlayer({ url, title, duration: propDuration, color = 'lukus', onTi
   };
 
   const progress = duration ? (currentTime / duration) * 100 : 0;
-
-  const colorMap = {
-    lukus: { bg: 'bg-lukus-500', track: '#22c55e', thumb: '#16a34a' },
-    green: { bg: 'bg-green-500', track: '#22c55e', thumb: '#16a34a' },
-    orange: { bg: 'bg-orange-500', track: '#f97316', thumb: '#ea580c' },
-    purple: { bg: 'bg-purple-500', track: '#8b5cf6', thumb: '#7c3aed' },
-    cyan: { bg: 'bg-cyan-500', track: '#06b6d4', thumb: '#0891b2' },
-    pink: { bg: 'bg-pink-500', track: '#ec4899', thumb: '#db2777' },
-    slate: { bg: 'bg-slate-500', track: '#64748b', thumb: '#475569' },
-  };
   const c = colorMap[color] || colorMap.lukus;
 
-  const sliderStyle = {
+  const sliderStyle: React.CSSProperties = {
     background: `linear-gradient(to right, ${c.track} ${progress}%, #374151 ${progress}%)`,
   };
 
   const volumePercent = isMuted ? 0 : volume * 100;
-  const volumeSliderStyle = {
+  const volumeSliderStyle: React.CSSProperties = {
     background: `linear-gradient(to top, ${c.track} ${volumePercent}%, #374151 ${volumePercent}%)`,
   };
 

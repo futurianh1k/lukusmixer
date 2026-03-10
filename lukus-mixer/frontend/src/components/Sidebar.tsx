@@ -9,10 +9,17 @@ import {
   Library,
   Disc3,
   ChevronUp,
-  Star
+  LucideIcon
 } from 'lucide-react';
 
-const menuItems = [
+interface MenuItem {
+  icon?: LucideIcon;
+  label?: string;
+  active?: boolean;
+  divider?: boolean;
+}
+
+const menuItems: MenuItem[] = [
   { icon: Music2, label: 'AI Text to Music', active: false },
   { icon: Sparkles, label: 'AI Music Generator', active: false },
   { icon: Mic2, label: 'AI Sample Generator', active: false },
@@ -25,7 +32,7 @@ const menuItems = [
   { icon: Disc3, label: 'Releases', active: false },
 ];
 
-function Sidebar() {
+function Sidebar(): React.ReactElement {
   return (
     <div className="w-[220px] bg-dark-950 border-r border-dark-800 flex flex-col">
       {/* 로고 */}
@@ -45,7 +52,7 @@ function Sidebar() {
             return <div key={index} className="my-2 mx-4 border-t border-dark-800" />;
           }
           
-          const Icon = item.icon;
+          const Icon = item.icon!;
           return (
             <button
               key={index}

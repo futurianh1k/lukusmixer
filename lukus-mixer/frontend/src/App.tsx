@@ -9,36 +9,57 @@ import MixingPanel from './components/MixingPanel';
 import AudioPlayer from './components/AudioPlayer';
 import useJobWebSocket from './hooks/useJobWebSocket';
 import axios from 'axios';
+import type { ModelInfo, UploadedFile, StemResult, JobStatus, ExpandedMix, WsJobUpdate } from './types/api';
 
 const API_BASE = '/api';
 
-const FALLBACK_MODELS = [
+interface FallbackModel {
+  id: string;
+  name: string;
+  stems: string[];
+  engine: string;
+  description: string;
+}
+
+const FALLBACK_MODELS: FallbackModel[] = [
   { id: 'htdemucs', name: '4 스템 (기본)', stems: ['vocals', 'drums', 'bass', 'other'], engine: 'demucs', description: 'Demucs — 빠른 속도' },
 ];
 
-function App() {
-  const [models, setModels] = useState(FALLBACK_MODELS);
-  const [uploadedFile, setUploadedFile] = useState(null);
-  const [selectedStems, setSelectedStems] = useState(['vocals', 'drums', 'bass', 'other']);
+type TabId = 'settings' | 'results' | 'mixing';
+
+interface Tab {
+  id: TabId;
+  label: string;
+}
+
+const TABS: Tab[] = [
+  { id: 'settings', label: '설정' },
+  { id: 'results',  label: '결과' },
+  { id: 'mixing',   label: '믹싱' },
+];
+
+function App(): React.ReactElement {
+  const [models, setModels] = useState<FallbackModel[]>(FALLBACK_MODELS);
+  const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
+  const [selectedStems, setSelectedStems] = useState<string[]>(['vocals', 'drums', 'bass', 'other']);
   const [selectedModel, setSelectedModel] = useState('htdemucs');
-  const [jobId, setJobId] = useState(null);
-  const [jobStatus, setJobStatus] = useState(null);
-  const [results, setResults] = useState(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<WsJobUpdate | null>(null);
+  const [results, setResults] = useState<Record<string, StemResult> | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [promptAppend, setPromptAppend] = useState(null);
-  const [expandedMix, setExpandedMix] = useState(null);
+  const [promptAppend, setPromptAppend] = useState<{ text: string; id: number } | null>(null);
+  const [expandedMix, setExpandedMix] = useState<ExpandedMix | null>(null);
   const appendIdRef = useRef(0);
 
-  const handleAppendPrompt = useCallback((text) => {
+  const handleAppendPrompt = useCallback((text: string) => {
     appendIdRef.current += 1;
     setPromptAppend({ text, id: appendIdRef.current });
   }, []);
 
-  // 서버에서 모델 목록 동적 로드
   useEffect(() => {
     (async () => {
       try {
-        const res = await axios.get(`${API_BASE}/system`);
+        const res = await axios.get<{ models: ModelInfo[] }>(`${API_BASE}/system`);
         const serverModels = (res.data.models || []).map(m => ({
           id: m.id,
           name: m.name,
@@ -55,7 +76,6 @@ function App() {
     })();
   }, []);
 
-  // 모델에 따른 스템 업데이트
   useEffect(() => {
     const model = models.find(m => m.id === selectedModel);
     if (model) {
@@ -63,7 +83,6 @@ function App() {
     }
   }, [selectedModel, models]);
 
-  // 업로드 파일 제거
   const handleRemoveFile = useCallback(() => {
     if (uploadedFile?.url) {
       URL.revokeObjectURL(uploadedFile.url);
@@ -76,13 +95,12 @@ function App() {
     setExpandedMix(null);
   }, [uploadedFile]);
 
-  // 파일 업로드 핸들러
-  const handleFileUpload = async (file) => {
+  const handleFileUpload = async (file: File): Promise<void> => {
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const response = await axios.post(`${API_BASE}/upload`, formData, {
+      const response = await axios.post<{ file_id: string; filename: string; duration: number; size: number }>(`${API_BASE}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       
@@ -94,86 +112,74 @@ function App() {
       setResults(null);
       setJobId(null);
       setJobStatus(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('업로드 오류:', error);
       toast.error(error.response?.data?.detail || '파일 업로드에 실패했습니다.');
     }
   };
 
-  // STEM 분리 시작
-  const handleSplit = async () => {
+  const handleSplit = async (): Promise<void> => {
     if (!uploadedFile) return;
 
     setIsProcessing(true);
     setResults(null);
 
     try {
-      const response = await axios.post(`${API_BASE}/split/${uploadedFile.file_id}`, {
+      const response = await axios.post<{ job_id: string; status: string }>(`${API_BASE}/split/${uploadedFile.file_id}`, {
         stems: selectedStems,
         model: selectedModel
       });
       
       setJobId(response.data.job_id);
-    } catch (error) {
+    } catch (error: any) {
       console.error('분리 시작 오류:', error);
       toast.error(error.response?.data?.detail || 'STEM 분리 시작에 실패했습니다.');
       setIsProcessing(false);
     }
   };
 
-  // WebSocket 기반 실시간 작업 상태 구독 (WS 실패 시 자동 HTTP 폴링 폴백)
   useJobWebSocket(isProcessing ? jobId : null, {
-    onUpdate: useCallback((data) => {
+    onUpdate: useCallback((data: WsJobUpdate) => {
       setJobStatus(data);
     }, []),
-    onComplete: useCallback((data) => {
+    onComplete: useCallback((data: WsJobUpdate) => {
       setResults(data.result);
       setIsProcessing(false);
       toast.success('STEM 분리가 완료되었습니다!');
     }, []),
-    onFailed: useCallback((data) => {
+    onFailed: useCallback((data: WsJobUpdate) => {
       setIsProcessing(false);
       toast.error(data.message || '처리 중 오류가 발생했습니다.');
     }, []),
   });
 
-  // 스템 다운로드
-  const handleDownload = (stemName) => {
+  const handleDownload = (stemName: string): void => {
     if (!jobId) return;
     window.open(`${API_BASE}/download/${jobId}/${stemName}`, '_blank');
   };
 
-  // ZIP 전체 다운로드
-  const handleDownloadAll = () => {
+  const handleDownloadAll = (): void => {
     if (!jobId) return;
     window.open(`${API_BASE}/download-all/${jobId}`, '_blank');
   };
 
-  // 라이브러리에 추가
-  const handleAddToLibrary = async (mixId) => {
+  const handleAddToLibrary = async (mixId?: string): Promise<void> => {
     if (!jobId) return;
     try {
-      const res = await axios.post(`${API_BASE}/library/add`, {
+      const res = await axios.post<{ message: string }>(`${API_BASE}/library/add`, {
         job_id: jobId,
         mix_id: mixId || null,
       });
       toast.success(res.data.message);
-    } catch (err) {
+    } catch (err: any) {
       toast.error('라이브러리 추가 실패: ' + (err.response?.data?.detail || err.message));
     }
   };
 
   const availableStems = models.find(m => m.id === selectedModel)?.stems || [];
 
-  // 모바일 탭 전환 (lg 미만에서만 사용)
-  const [mobileTab, setMobileTab] = useState('settings');
-  const TABS = [
-    { id: 'settings', label: '설정' },
-    { id: 'results',  label: '결과' },
-    { id: 'mixing',   label: '믹싱' },
-  ];
+  const [mobileTab, setMobileTab] = useState<TabId>('settings');
 
-  // 설정 패널 내용 (공통 추출)
   const settingsContent = (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-6">Stem Splitter</h1>
@@ -329,12 +335,10 @@ function App() {
         }}
       />
 
-      {/* 사이드바: lg 이상에서만 표시 */}
       <div className="hidden lg:block">
         <Sidebar />
       </div>
 
-      {/* ── 데스크톱 레이아웃 (lg+): 3컬럼 ── */}
       <div className="hidden lg:flex flex-1 overflow-hidden">
         <div className="w-[400px] border-r border-dark-700 flex flex-col overflow-y-auto">
           {settingsContent}
@@ -347,9 +351,7 @@ function App() {
         </div>
       </div>
 
-      {/* ── 모바일/태블릿 레이아웃 (<lg): 탭 전환 ── */}
       <div className="flex lg:hidden flex-1 flex-col overflow-hidden">
-        {/* 탭 바 */}
         <div className="flex border-b border-dark-700 bg-dark-900 shrink-0">
           {TABS.map(tab => (
             <button
@@ -369,7 +371,6 @@ function App() {
           ))}
         </div>
 
-        {/* 탭 콘텐츠 */}
         <div className="flex-1 overflow-y-auto">
           {mobileTab === 'settings' && settingsContent}
           {mobileTab === 'results' && (

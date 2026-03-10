@@ -8,17 +8,21 @@
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
 import axios from 'axios';
+import type { UseJobWebSocketCallbacks, UseJobWebSocketReturn, WsJobUpdate } from '../types/api';
 
 const API_BASE = '/api';
 const RECONNECT_MAX = 3;
 const POLL_INTERVAL_MS = 1500;
 
-export default function useJobWebSocket(jobId, { onUpdate, onComplete, onFailed }) {
-  const wsRef = useRef(null);
+export default function useJobWebSocket(
+  jobId: string | null,
+  { onUpdate, onComplete, onFailed }: UseJobWebSocketCallbacks
+): UseJobWebSocketReturn {
+  const wsRef = useRef<WebSocket | null>(null);
   const retriesRef = useRef(0);
   const [usingFallback, setUsingFallback] = useState(false);
 
-  const handleMessage = useCallback((data) => {
+  const handleMessage = useCallback((data: WsJobUpdate) => {
     if (data.type === 'job_update') {
       onUpdate?.(data);
       if (data.status === 'completed') {
@@ -33,7 +37,7 @@ export default function useJobWebSocket(jobId, { onUpdate, onComplete, onFailed 
     if (!jobId) return;
 
     let cancelled = false;
-    let pollTimer = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     const startPolling = () => {
       setUsingFallback(true);
@@ -43,7 +47,7 @@ export default function useJobWebSocket(jobId, { onUpdate, onComplete, onFailed 
           const res = await axios.get(`${API_BASE}/job/${jobId}`);
           handleMessage({ type: 'job_update', ...res.data });
           if (res.data.status === 'completed' || res.data.status === 'failed') {
-            clearInterval(pollTimer);
+            if (pollTimer) clearInterval(pollTimer);
           }
         } catch (err) {
           console.error('폴링 오류:', err);
@@ -66,7 +70,7 @@ export default function useJobWebSocket(jobId, { onUpdate, onComplete, onFailed 
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data);
+          const data = JSON.parse(event.data) as WsJobUpdate;
           handleMessage(data);
           if (data.status === 'completed' || data.status === 'failed') {
             ws.close();
