@@ -403,10 +403,10 @@ def _update_job(job_id, log=None, **kwargs):
     job_store.update_job(job_id, log=log, **kwargs)
     if log:
         logger.info(log)
-    # WebSocket 구독자에게 실시간 push
+    # WebSocket 구독자에게 실시간 push (스레드 안전)
     job = job_store.get_job(job_id)
-    if job:
-        asyncio.ensure_future(_notify_ws(job_id, {
+    if job and _main_loop:
+        coro = _notify_ws(job_id, {
             "type": "job_update",
             "job_id": job_id,
             "status": job["status"],
@@ -414,7 +414,8 @@ def _update_job(job_id, log=None, **kwargs):
             "message": job["message"],
             "result": job.get("result"),
             "logs": job.get("logs"),
-        }))
+        })
+        asyncio.run_coroutine_threadsafe(coro, _main_loop)
 
 
 async def process_split_job(
