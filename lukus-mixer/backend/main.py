@@ -161,6 +161,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 class SplitRequest(BaseModel):
     stems: List[str] = ["vocals", "drums", "bass", "other"]
     model: str = "htdemucs"
+    custom_query_ids: Optional[List[str]] = None  # 추가 커스텀 쿼리 분리
 
 
 class MixRequest(BaseModel):
@@ -328,7 +329,11 @@ async def split_stems(
     request: SplitRequest,
     background_tasks: BackgroundTasks
 ):
-    """STEM 분리 작업 시작"""
+    """STEM 분리 작업 시작
+    
+    기존 모델 기반 분리 + 커스텀 쿼리 분리를 함께 실행할 수 있습니다.
+    custom_query_ids가 제공되면 기존 분리 완료 후 커스텀 쿼리 분리도 실행됩니다.
+    """
     _sanitize_filename(file_id)
     file_dir = _safe_resolve(OUTPUT_DIR, file_id)
     
@@ -343,13 +348,36 @@ async def split_stems(
     if not original_file:
         raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
     
+    # 커스텀 쿼리 검증 (있는 경우)
+    custom_query_map = {}
+    if request.custom_query_ids:
+        if not demucs_service.banquet_available:
+            raise HTTPException(
+                status_code=503,
+                detail="Banquet 모델이 사용 불가능합니다. 커스텀 쿼리 기능을 사용할 수 없습니다.",
+            )
+        for qid in request.custom_query_ids:
+            query = job_store.get_custom_query(qid)
+            if not query:
+                raise HTTPException(status_code=404, detail=f"쿼리를 찾을 수 없습니다: {qid}")
+            if not Path(query["file_path"]).exists():
+                raise HTTPException(status_code=404, detail=f"쿼리 파일이 없습니다: {query['name']}")
+            custom_query_map[query["name"]] = {
+                "query_id": qid,
+                "path": query["file_path"],
+                "color": query.get("color", "#94a3b8"),
+            }
+    
+    # 전체 스템 목록 (모델 스템 + 커스텀 쿼리 스템)
+    all_stems = list(request.stems) + list(custom_query_map.keys())
+    
     # 작업 생성
     job_id = str(uuid.uuid4())
     job_store.create_job(
         job_id=job_id,
         file_id=file_id,
         model=request.model,
-        stems=request.stems,
+        stems=all_stems,
         original_filename=original_file.name,
     )
     
@@ -359,10 +387,16 @@ async def split_stems(
         job_id,
         str(original_file),
         request.model,
-        request.stems
+        request.stems,
+        custom_query_map,  # 추가: 커스텀 쿼리 맵
     )
     
-    return {"job_id": job_id, "status": "pending"}
+    return {
+        "job_id": job_id,
+        "status": "pending",
+        "stems": all_stems,
+        "has_custom_queries": len(custom_query_map) > 0,
+    }
 
 
 def _update_job(job_id, log=None, **kwargs):
@@ -387,15 +421,19 @@ async def process_split_job(
     job_id: str, 
     audio_path: str, 
     model: str, 
-    requested_stems: List[str]
+    requested_stems: List[str],
+    custom_query_map: Optional[Dict[str, dict]] = None,
 ):
-    """백그라운드 STEM 분리 작업 — Semaphore로 동시 실행 제한"""
+    """백그라운드 STEM 분리 작업 — Semaphore로 동시 실행 제한
+    
+    기존 모델 분리 + 커스텀 쿼리 분리를 순차적으로 실행합니다.
+    """
     _update_job(job_id, status="pending", progress=5,
                 message=f"대기 중 (동시 처리 제한: {MAX_CONCURRENT_SPLITS})...",
                 log="GPU 큐 대기 중...")
 
     async with _gpu_semaphore:
-        await _process_split_inner(job_id, audio_path, model, requested_stems)
+        await _process_split_inner(job_id, audio_path, model, requested_stems, custom_query_map)
 
 
 async def _process_split_inner(
@@ -403,14 +441,22 @@ async def _process_split_inner(
     audio_path: str,
     model: str,
     requested_stems: List[str],
+    custom_query_map: Optional[Dict[str, dict]] = None,
 ):
-    """실제 STEM 분리 로직"""
+    """실제 STEM 분리 로직 — 모델 분리 + 커스텀 쿼리 분리 통합"""
+    custom_query_map = custom_query_map or {}
+    has_custom = len(custom_query_map) > 0
+    
+    # 진행률 할당: 모델 분리 70%, 커스텀 쿼리 20%, 스펙트로그램 10%
+    model_progress_end = 70 if has_custom else 80
+    custom_progress_end = 90 if has_custom else 80
+    
     try:
         _update_job(job_id, status="processing", progress=10, message="STEM 분리 시작...",
-                    log=f"STEM 분리 시작 (model={model})")
+                    log=f"STEM 분리 시작 (model={model})" + (f" + {len(custom_query_map)}개 커스텀 쿼리" if has_custom else ""))
 
         # 원본 스펙트로그램 미리 생성
-        _update_job(job_id, progress=15, message="원본 스펙트로그램 생성 중...",
+        _update_job(job_id, progress=12, message="원본 스펙트로그램 생성 중...",
                     log="원본 스펙트로그램 생성 중...")
         original_spec_path = Path(audio_path).parent / "original_spectrogram.png"
         try:
@@ -420,11 +466,11 @@ async def _process_split_inner(
         except Exception as e:
             logger.warning("원본 스펙트로그램 실패: %s", e)
 
-        # STEM 분리 실행
+        # ── 1단계: 모델 기반 STEM 분리 ──
         engine = DEMUCS_MODELS.get(model, {}).get("engine", "demucs")
         engine_label = "BS-RoFormer + Demucs 체이닝" if engine == "chained" else f"Demucs ({model})"
-        _update_job(job_id, progress=20, message="AI 처리 중...",
-                    log=f"{engine_label} AI 처리 시작...")
+        _update_job(job_id, progress=15, message="AI 처리 중...",
+                    log=f"[1/{'2' if has_custom else '1'}] {engine_label} AI 처리 시작...")
 
         def _progress_log(msg):
             _update_job(job_id, log=msg)
@@ -438,38 +484,106 @@ async def _process_split_inner(
             _progress_log,
         )
 
-        _update_job(job_id, progress=80, message="분리 완료, 스펙트로그램 생성 중...",
+        _update_job(job_id, progress=model_progress_end,
+                    message=f"모델 분리 완료 ({len(stem_paths)}개 스템)",
                     log=f"{engine_label} 완료 → {len(stem_paths)}개 스템 검출")
         
-        # 결과 필터링 + 스펙트로그램 동시 생성
+        # 모델 분리 결과 수집
         result_stems = {}
-        total = len([s for s in stem_paths if s in requested_stems])
-        for i, (stem_name, stem_path) in enumerate(stem_paths.items()):
+        for stem_name, stem_path in stem_paths.items():
             if stem_name not in requested_stems:
                 continue
             dur = demucs_service.get_audio_duration(stem_path)
-            spec_path = Path(stem_path).parent / f"{stem_name}_spectrogram.png"
-            
-            _update_job(job_id, progress=80 + int(18 * (i + 1) / max(total, 1)),
-                        message=f"스펙트로그램 생성 중... ({i+1}/{total})")
-            try:
-                await asyncio.to_thread(
-                    generate_spectrogram_image, stem_path, str(spec_path), stem_name
-                )
-            except Exception as e:
-                logger.warning("%s 스펙트로그램 실패: %s", stem_name, e)
-
             result_stems[stem_name] = {
                 "name": stem_name,
                 "path": stem_path,
                 "duration": dur,
-                "spectrogram": str(spec_path) if spec_path.exists() else None,
+                "spectrogram": None,
             }
+
+        # ── 2단계: 커스텀 쿼리 분리 (있는 경우) ──
+        if has_custom:
+            from banquet_service import BanquetService
+            banquet = BanquetService()
+            
+            output_dir = Path(audio_path).parent / "custom_stems"
+            output_dir.mkdir(exist_ok=True)
+            
+            total_custom = len(custom_query_map)
+            _update_job(job_id, progress=model_progress_end + 2,
+                        message=f"커스텀 쿼리 분리 시작 ({total_custom}개)...",
+                        log=f"[2/2] Banquet 커스텀 분리 시작 ({total_custom}개 쿼리)")
+
+            for i, (stem_name, info) in enumerate(custom_query_map.items(), 1):
+                progress = model_progress_end + int((custom_progress_end - model_progress_end) * i / total_custom)
+                _update_job(job_id, progress=progress,
+                            message=f"커스텀 분리 중... ({i}/{total_custom}): {stem_name}",
+                            log=f"  [{i}/{total_custom}] {stem_name} 분리 중...")
+
+                try:
+                    output_path = str(output_dir / f"{stem_name}.wav")
+                    await asyncio.to_thread(
+                        banquet.separate_one,
+                        audio_path,
+                        info["path"],
+                        output_path,
+                        stem_name,
+                    )
+
+                    # MP3 변환
+                    mp3_path = str(output_dir / f"{stem_name}.mp3")
+                    from pydub import AudioSegment
+                    audio = AudioSegment.from_file(output_path)
+                    audio.export(mp3_path, format="mp3", bitrate="320k")
+                    Path(output_path).unlink()
+
+                    dur = demucs_service.get_audio_duration(mp3_path)
+                    result_stems[stem_name] = {
+                        "name": stem_name,
+                        "path": mp3_path,
+                        "duration": dur,
+                        "spectrogram": None,
+                        "color": info.get("color", "#94a3b8"),
+                        "query_id": info["query_id"],
+                        "is_custom": True,
+                    }
+                    _update_job(job_id, log=f"  ✓ {stem_name} 분리 완료")
+
+                except Exception as e:
+                    logger.error("커스텀 스템 %s 분리 실패: %s", stem_name, e)
+                    _update_job(job_id, log=f"  ✗ {stem_name} 실패: {type(e).__name__}")
+
+        # ── 3단계: 스펙트로그램 생성 ──
+        _update_job(job_id, progress=custom_progress_end,
+                    message="스펙트로그램 생성 중...",
+                    log="스펙트로그램 생성 시작...")
+        
+        total_specs = len(result_stems)
+        for i, (stem_name, info) in enumerate(result_stems.items(), 1):
+            spec_path = Path(info["path"]).parent / f"{stem_name}_spectrogram.png"
+            progress = custom_progress_end + int(10 * i / max(total_specs, 1))
+            _update_job(job_id, progress=progress,
+                        message=f"스펙트로그램 생성 중... ({i}/{total_specs})")
+            try:
+                await asyncio.to_thread(
+                    generate_spectrogram_image, info["path"], str(spec_path), stem_name
+                )
+                info["spectrogram"] = str(spec_path) if spec_path.exists() else None
+            except Exception as e:
+                logger.warning("%s 스펙트로그램 실패: %s", stem_name, e)
+
+        # ── 완료 ──
+        custom_count = len([s for s in result_stems.values() if s.get("is_custom")])
+        model_count = len(result_stems) - custom_count
+        
+        completion_msg = f"완료! {len(result_stems)}개 스템 분리됨"
+        if custom_count > 0:
+            completion_msg += f" (모델: {model_count}, 커스텀: {custom_count})"
         
         _update_job(job_id, status="completed", progress=100,
-                    message=f"완료! {len(result_stems)}개 스템 분리됨",
+                    message=completion_msg,
                     result=result_stems,
-                    log=f"✅ 모든 작업 완료 ({len(result_stems)}개 스템 + 스펙트로그램)")
+                    log=f"✅ {completion_msg}")
         
     except Exception as e:
         logger.error("STEM 분리 실패 (job_id=%s): %s", job_id, e)

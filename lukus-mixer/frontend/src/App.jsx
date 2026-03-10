@@ -109,7 +109,7 @@ function App() {
     }
   };
 
-  // STEM 분리 시작
+  // STEM 분리 시작 — 기존 모델 + 커스텀 쿼리 통합 분리
   const handleSplit = async () => {
     if (!uploadedFile) return;
 
@@ -117,20 +117,22 @@ function App() {
     setResults(null);
 
     try {
-      let response;
+      // 요청 데이터 구성
+      const requestData = {
+        stems: selectedStems,
+        model: selectedModel,
+      };
       
+      // 커스텀 쿼리가 활성화되어 있고 선택된 쿼리가 있으면 추가
       if (useCustomQuery && selectedQueryIds.length > 0) {
-        // 커스텀 쿼리 기반 분리
-        response = await axios.post(`${API_BASE}/split-custom/${uploadedFile.file_id}`, {
-          query_ids: selectedQueryIds,
-        });
-        toast.success(`커스텀 쿼리 분리 시작 (${selectedQueryIds.length}개 쿼리)`);
-      } else {
-        // 일반 모델 기반 분리
-        response = await axios.post(`${API_BASE}/split/${uploadedFile.file_id}`, {
-          stems: selectedStems,
-          model: selectedModel
-        });
+        requestData.custom_query_ids = selectedQueryIds;
+      }
+      
+      const response = await axios.post(`${API_BASE}/split/${uploadedFile.file_id}`, requestData);
+      
+      // 토스트 메시지
+      if (response.data.has_custom_queries) {
+        toast.success(`분리 시작: 모델 스템 ${selectedStems.length}개 + 커스텀 ${selectedQueryIds.length}개`);
       }
       
       setJobId(response.data.job_id);
@@ -331,17 +333,17 @@ function App() {
 
       <button
         onClick={handleSplit}
-        disabled={!uploadedFile || isProcessing || (useCustomQuery && selectedQueryIds.length === 0)}
+        disabled={!uploadedFile || isProcessing}
         className={`w-full py-3 px-4 rounded-xl font-medium transition-all ${
-          useCustomQuery
+          useCustomQuery && selectedQueryIds.length > 0
             ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white disabled:opacity-50'
             : 'btn-primary'
         }`}
       >
         {isProcessing 
           ? '처리 중...' 
-          : useCustomQuery 
-            ? `커스텀 분리 (${selectedQueryIds.length}개 쿼리)`
+          : useCustomQuery && selectedQueryIds.length > 0
+            ? `Split Stems + ${selectedQueryIds.length}개 커스텀`
             : 'Split Stems'
         }
       </button>
