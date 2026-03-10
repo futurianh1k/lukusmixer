@@ -77,6 +77,8 @@ async def _cleanup_old_files():
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """앱 시작/종료 라이프사이클 관리 — FastAPI lifespan 패턴"""
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     cleanup_task = asyncio.create_task(_cleanup_old_files())
     logger.info("파일 TTL 정리 스케줄러 시작 (TTL=%dh, 주기=%dm)", FILE_TTL_HOURS, CLEANUP_INTERVAL_MINUTES)
     yield
@@ -111,6 +113,9 @@ job_store = JobStore()
 # GPU 동시 작업 제한 — VRAM 부족 방지
 MAX_CONCURRENT_SPLITS = int(os.environ.get("MAX_CONCURRENT_SPLITS", 1))
 _gpu_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SPLITS)
+
+# 메인 이벤트 루프 참조 (스레드에서 코루틴 호출 시 필요)
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
 
 # ──────────────────────────────────────────────
 # WebSocket 구독 관리
@@ -369,10 +374,10 @@ def _update_job(job_id, log=None, **kwargs):
     job_store.update_job(job_id, log=log, **kwargs)
     if log:
         logger.info(log)
-    # WebSocket 구독자에게 실시간 push
+    # WebSocket 구독자에게 실시간 push (스레드 안전)
     job = job_store.get_job(job_id)
-    if job:
-        asyncio.ensure_future(_notify_ws(job_id, {
+    if job and _main_loop:
+        coro = _notify_ws(job_id, {
             "type": "job_update",
             "job_id": job_id,
             "status": job["status"],
@@ -380,7 +385,8 @@ def _update_job(job_id, log=None, **kwargs):
             "message": job["message"],
             "result": job.get("result"),
             "logs": job.get("logs"),
-        }))
+        })
+        asyncio.run_coroutine_threadsafe(coro, _main_loop)
 
 
 async def process_split_job(
