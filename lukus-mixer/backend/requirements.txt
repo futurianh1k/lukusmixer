@@ -1,9 +1,34 @@
+# ═══════════════════════════════════════════════════
+# LUKUS Music Mixer — Backend Dependencies
+# ═══════════════════════════════════════════════════
+# 설치: pip install -r requirements.txt
+
+# FastAPI 웹 프레임워크
 fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
 python-multipart>=0.0.6
 pydantic>=2.0.0
-demucs>=4.0.0
+websockets>=12.0
+
+# AI/ML 핵심
 torch>=2.0.0
+torchaudio>=2.0.0
+torchcodec>=0.1.0
+
+# 음원 분리 모델
+demucs>=4.0.0
+
+# 오디오 처리
 librosa>=0.10.0
 pydub>=0.25.0
+soundfile>=0.12.0
 numpy>=1.24.0
+
+# Banquet (Query-based separation) 의존성
+omegaconf>=2.3.0
+torchmetrics>=1.0.0
+pytorch-lightning>=2.0.0
+einops>=0.7.0
+
+# 유틸리티
+ffmpeg-python>=0.2.0

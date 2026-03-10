@@ -1,16 +1,69 @@
-node_modules
+# ═══════════════════════════════════════════════════
+# LUKUS Music Mixer — Docker 빌드 제외 파일
+# ═══════════════════════════════════════════════════
+
+# Git
 .git
 .gitignore
-__pycache__
-*.pyc
-.pytest_cache
-*.egg-info
-dist
-build
+.gitmodules
+
+# 개발 환경
 .env
 .env.local
+.env.*.local
+*.log
+
+# IDE
 .vscode
-.cursor
-History
-docs
+.idea
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 빌드 결과물
+frontend/dist/
+frontend/build/
+
+# 테스트
+coverage/
+.coverage
+htmlcov/
+
+# 문서
+docs/
 *.md
+!README.md
+History/
+
+# 대용량 파일
+*.ckpt
+*.pth
+*.pt
+*.bin
+*.safetensors
+checkpoints/
+
+# 임시 파일
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db

@@ -5,12 +5,18 @@
 #   docker compose up -d            # 전체 시작
 #   docker compose up -d backend    # 백엔드만
 #   docker compose logs -f backend  # 백엔드 로그
+#   docker compose down             # 중지
 #
 # GPU 사용 시 NVIDIA Container Toolkit 필요:
 #   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/
 #
+# Banquet 체크포인트:
+#   1. Zenodo에서 다운로드: https://zenodo.org/records/13694558
+#   2. ./checkpoints/ 폴더에 ev-pre-aug.ckpt 배치
+#   3. docker compose up 실행
+#
 # 환경변수 커스터마이징:
-#   .env 파일 생성 또는 docker compose --env-file .env.prod up
+#   cp .env.example .env && vim .env
 
 services:
   backend:
@@ -24,6 +30,9 @@ services:
     volumes:
       - lukus-data:/data
       - lukus-models:/root/.cache
+      - lukus-custom-queries:/app/custom_queries
+      # Banquet 체크포인트 마운트 (호스트에 다운로드 필요)
+      - ${BANQUET_CHECKPOINT_DIR:-./checkpoints}:/app/query_bandit/checkpoints:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - LUKUS_DATA_DIR=/data
@@ -31,6 +40,7 @@ services:
       - CLEANUP_INTERVAL_MINUTES=${CLEANUP_INTERVAL_MINUTES:-30}
       - MAX_CONCURRENT_SPLITS=${MAX_CONCURRENT_SPLITS:-1}
       - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-209715200}
+      - BANQUET_BATCH_SIZE=${BANQUET_BATCH_SIZE:-1}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:80}
     deploy:
       resources:
@@ -43,6 +53,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
       interval: 30s
       timeout: 10s
+      start_period: 60s
       retries: 3
 
   frontend:
@@ -62,3 +73,5 @@ volumes:
     name: lukus-mixer-data
   lukus-models:
     name: lukus-mixer-models
+  lukus-custom-queries:
+    name: lukus-mixer-custom-queries
