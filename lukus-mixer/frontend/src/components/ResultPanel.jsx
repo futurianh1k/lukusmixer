@@ -8,28 +8,34 @@ const STEM_COLORS = {
   bass: 'purple',
   guitar: 'cyan',
   piano: 'pink',
+  strings: 'violet', brass: 'amber', woodwinds: 'emerald', synthesizer: 'fuchsia',
   other: 'slate',
 };
 
 const STEM_LABELS = {
   vocals: 'Vocals', lead_vocals: 'Lead Vocals', backing_vocals: 'Backing Vocals',
   drums: 'Drums', kick: 'Kick', snare: 'Snare', toms: 'Toms', cymbals: 'Cymbals',
-  bass: 'Bass', guitar: 'Guitar', piano: 'Piano', other: 'Other',
+  bass: 'Bass', guitar: 'Guitar', piano: 'Piano',
+  strings: 'Strings', brass: 'Brass', woodwinds: 'Woodwinds', synthesizer: 'Synthesizer',
+  other: 'Other',
 };
 
 const STEM_KR = {
   vocals: '보컬', lead_vocals: '리드보컬', backing_vocals: '백킹보컬',
   drums: '드럼', kick: '킥', snare: '스네어', toms: '탐', cymbals: '심벌즈',
-  bass: '베이스', guitar: '기타', piano: '피아노', other: '기타악기',
+  bass: '베이스', guitar: '기타', piano: '피아노',
+  strings: '현악기', brass: '금관악기', woodwinds: '목관악기', synthesizer: '신디사이저',
+  other: '기타악기',
   Original: '전체',
 };
 
 const STEM_GROUPS = {
   lead_vocals: 'vocals', backing_vocals: 'vocals',
   kick: 'drums', snare: 'drums', toms: 'drums', cymbals: 'drums',
+  strings: 'banquet', brass: 'banquet', woodwinds: 'banquet', synthesizer: 'banquet',
 };
 
-const GROUP_LABELS = { vocals: 'Vocals', drums: 'Drums' };
+const GROUP_LABELS = { vocals: 'Vocals', drums: 'Drums', banquet: 'Banquet (롱테일 악기)' };
 
 const VOLUME_OPTIONS = [
   { label: '최대 (+12dB)', action: '최대로 크게', db: 12 },
@@ -425,25 +431,22 @@ function StemGroup({ groupName, stemNames, results, jobId, specHeight, stemTimes
                      collapsedGroups, toggleGroup }) {
   const isCollapsed = collapsedGroups[groupName];
   const groupLabel = GROUP_LABELS[groupName] || groupName;
-  const groupColor = groupName === 'vocals' ? 'green' : 'orange';
+  const groupColorMap = {
+    vocals: { border: 'border-green-500/20', bg: 'bg-green-500/10', text: 'text-green-400', hover: 'hover:bg-green-500/15', dot: 'bg-green-400' },
+    drums: { border: 'border-orange-500/20', bg: 'bg-orange-500/10', text: 'text-orange-400', hover: 'hover:bg-orange-500/15', dot: 'bg-orange-400' },
+    banquet: { border: 'border-violet-500/20', bg: 'bg-violet-500/10', text: 'text-violet-400', hover: 'hover:bg-violet-500/15', dot: 'bg-violet-400' },
+  };
+  const gc = groupColorMap[groupName] || groupColorMap.drums;
 
   return (
-    <div className={`rounded-lg border ${
-      groupColor === 'green' ? 'border-green-500/20' : 'border-orange-500/20'
-    } overflow-hidden`}>
+    <div className={`rounded-lg border ${gc.border} overflow-hidden`}>
       <button
         onClick={() => toggleGroup(groupName)}
         className={`w-full flex items-center justify-between px-3 py-2 text-xs font-semibold
-          transition-colors ${
-            groupColor === 'green'
-              ? 'bg-green-500/10 text-green-400 hover:bg-green-500/15'
-              : 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/15'
-          }`}
+          transition-colors ${gc.bg} ${gc.text} ${gc.hover}`}
       >
         <span className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${
-            groupColor === 'green' ? 'bg-green-400' : 'bg-orange-400'
-          }`} />
+          <span className={`w-2 h-2 rounded-full ${gc.dot}`} />
           {groupLabel} ({stemNames.length} sub-stems)
         </span>
         <span className="text-[10px]">{isCollapsed ? '▶' : '▼'}</span>
@@ -662,7 +665,7 @@ function ResultPanel({ results, jobId, uploadedFile, onDownload, onDownloadAll, 
               }
             });
 
-            const groupOrder = ['vocals', 'drums'];
+            const groupOrder = ['vocals', 'drums', 'banquet'];
             const rendered = [];
 
             groupOrder.forEach(gName => {

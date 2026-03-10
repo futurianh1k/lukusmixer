@@ -183,6 +183,7 @@ class SystemInfo(BaseModel):
     cuda_available: bool
     demucs_available: bool
     audio_separator_available: bool = False
+    banquet_available: bool = False
     models: List[dict]
 
 
@@ -198,20 +199,25 @@ async def root():
 @app.get("/api/system", response_model=SystemInfo)
 async def get_system_info():
     """시스템 정보 조회"""
+    available_models = []
+    for k, v in DEMUCS_MODELS.items():
+        engine = v.get("engine", "demucs")
+        if engine == "chained_banquet" and not demucs_service.banquet_available:
+            continue
+        available_models.append({
+            "id": k,
+            "name": v["name"],
+            "stems": v["stems"],
+            "description": v.get("description", ""),
+            "engine": engine,
+        })
+
     return SystemInfo(
         cuda_available=demucs_service.cuda_available,
         demucs_available=demucs_service.demucs_available,
         audio_separator_available=demucs_service.audio_separator_available,
-        models=[
-            {
-                "id": k,
-                "name": v["name"],
-                "stems": v["stems"],
-                "description": v.get("description", ""),
-                "engine": v.get("engine", "demucs"),
-            }
-            for k, v in DEMUCS_MODELS.items()
-        ]
+        banquet_available=demucs_service.banquet_available,
+        models=available_models,
     )
 
 
@@ -621,6 +627,16 @@ INSTRUMENT_MAP = {
     "베이스": "bass", "베이스기타": "bass",
     "기타": "guitar", "일렉기타": "guitar", "어쿠스틱기타": "guitar", "전기기타": "guitar",
     "피아노": "piano", "키보드": "piano", "건반": "piano",
+    # Banquet 14스템 추가 (Phase 3)
+    "현악기": "strings", "스트링": "strings", "스트링스": "strings",
+    "바이올린": "strings", "비올라": "strings", "첼로": "strings",
+    "금관악기": "brass", "브라스": "brass",
+    "트럼펫": "brass", "트롬본": "brass", "호른": "brass", "튜바": "brass",
+    "목관악기": "woodwinds", "우드윈드": "woodwinds",
+    "플루트": "woodwinds", "플룻": "woodwinds", "클라리넷": "woodwinds",
+    "오보에": "woodwinds", "바순": "woodwinds", "색소폰": "woodwinds",
+    "신디사이저": "synthesizer", "신스": "synthesizer", "싱스": "synthesizer",
+    "패드": "synthesizer", "신디": "synthesizer",
     "나머지": "other", "기타악기": "other", "그외": "other", "배경": "other",
 }
 
@@ -892,9 +908,13 @@ async def get_original_spectrogram(file_id: str):
 import time as _time
 
 _SPEC_COLORS = {
-    "vocals": "#22c55e", "drums": "#f97316", "bass": "#8b5cf6",
-    "guitar": "#06b6d4", "piano": "#ec4899", "other": "#64748b",
-    "Original": "#f97316",
+    "vocals": "#22c55e", "lead_vocals": "#22c55e", "backing_vocals": "#4ade80",
+    "drums": "#f97316", "kick": "#f97316", "snare": "#fb923c",
+    "toms": "#fdba74", "cymbals": "#fde68a",
+    "bass": "#8b5cf6", "guitar": "#06b6d4", "piano": "#ec4899",
+    "strings": "#a78bfa", "brass": "#fbbf24",
+    "woodwinds": "#34d399", "synthesizer": "#f472b6",
+    "other": "#64748b", "Original": "#f97316",
 }
 
 

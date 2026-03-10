@@ -18,6 +18,10 @@ const STEM_CONFIG = {
   bass:           { label: '베이스', en: 'Bass', icon: Waves,  color: 'purple' },
   guitar:         { label: '기타', en: 'Guitar', icon: Guitar, color: 'cyan' },
   piano:          { label: '피아노', en: 'Piano', icon: Piano,  color: 'pink' },
+  strings:        { label: '현악기', en: 'Strings', icon: Music, color: 'violet' },
+  brass:          { label: '금관악기', en: 'Brass', icon: Music, color: 'amber' },
+  woodwinds:      { label: '목관악기', en: 'Woodwinds', icon: Music, color: 'emerald' },
+  synthesizer:    { label: '신디사이저', en: 'Synthesizer', icon: Music, color: 'fuchsia' },
   other:          { label: '기타악기', en: 'Other', icon: Music, color: 'slate' },
 };
 
@@ -204,6 +208,11 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
               purple: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
               cyan: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50',
               pink: 'bg-pink-500/20 text-pink-400 border-pink-500/50',
+              yellow: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
+              violet: 'bg-violet-500/20 text-violet-400 border-violet-500/50',
+              amber: 'bg-amber-500/20 text-amber-400 border-amber-500/50',
+              emerald: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50',
+              fuchsia: 'bg-fuchsia-500/20 text-fuchsia-400 border-fuchsia-500/50',
               slate: 'bg-slate-500/20 text-slate-400 border-slate-500/50',
             }[cfg?.color || 'slate'];
 
@@ -425,7 +434,7 @@ function MixingPanel({ results, jobId, duration, onAddToLibrary, originalFilenam
                      focus:outline-none focus:border-orange-500"
         />
         <p className="text-[10px] text-dark-600 mt-1">
-          인식 가능: 보컬, 드럼, 베이스, 기타, 피아노 | 구간: 전주, 후주, X초~Y초 | 볼륨: 키워, 작게, 음소거
+          인식 가능: 보컬, 드럼, 베이스, 기타, 피아노, 현악기, 금관, 목관, 신스 | 구간: 전주, 후주, X초~Y초 | 볼륨: 키워, 작게, 음소거
         </p>
       </div>
 

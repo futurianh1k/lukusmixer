@@ -9,7 +9,7 @@ export interface ModelInfo {
   id: string;
   name: string;
   stems: string[];
-  engine: 'demucs' | 'chained' | 'chained_10s';
+  engine: 'demucs' | 'chained' | 'chained_10s' | 'chained_banquet';
   description: string;
 }
 
@@ -17,6 +17,7 @@ export interface SystemInfo {
   cuda_available: boolean;
   demucs_available: boolean;
   audio_separator_available: boolean;
+  banquet_available: boolean;
   models: ModelInfo[];
 }
 

@@ -6,6 +6,7 @@ Demucs Service - STEM 분리 로직
   - audio-separator 체이닝:
     * BS-RoFormer + Demucs (6스템)
     * BS-RoFormer + Demucs + MelBand-RoFormer + DrumSep (10스템)
+    * BS-RoFormer + Demucs + MelBand + DrumSep + Banquet (14스템)
 
 참고 출처:
   - python-audio-separator: https://github.com/nomadkaraoke/python-audio-separator (MIT)
@@ -13,6 +14,7 @@ Demucs Service - STEM 분리 로직
   - Demucs v4: https://github.com/facebookresearch/demucs (MIT)
   - MelBand-RoFormer Karaoke: aufr33 & viperx (보컬 세분화용)
   - MDX23C DrumSep: aufr33 & jarredou (드럼 세분화용)
+  - Banquet: https://github.com/kwatcharasupat/query-bandit (MIT, ISMIR 2024)
 """
 
 import logging
@@ -71,6 +73,18 @@ DEMUCS_MODELS = {
         "description": "BS-RoFormer + Demucs 6s + MelBand Karaoke + DrumSep — 10스템 최고 품질",
         "engine": "chained_10s",
     },
+    "banquet_14s": {
+        "name": "14 스템 (Banquet 롱테일 악기)",
+        "stems": [
+            "lead_vocals", "backing_vocals",
+            "kick", "snare", "toms", "cymbals",
+            "bass", "guitar", "piano",
+            "strings", "brass", "woodwinds", "synthesizer",
+            "other",
+        ],
+        "description": "10스템 + Banquet 쿼리 분리 — 현악기/금관/목관/신스 추가 (14스템)",
+        "engine": "chained_banquet",
+    },
 }
 
 STEM_LABELS = {
@@ -85,10 +99,14 @@ STEM_LABELS = {
     "bass": {"ko": "베이스", "en": "Bass", "color": "#8b5cf6"},
     "guitar": {"ko": "기타", "en": "Guitar", "color": "#06b6d4"},
     "piano": {"ko": "피아노", "en": "Piano", "color": "#ec4899"},
+    "strings": {"ko": "현악기", "en": "Strings", "color": "#a78bfa"},
+    "brass": {"ko": "금관악기", "en": "Brass", "color": "#fbbf24"},
+    "woodwinds": {"ko": "목관악기", "en": "Woodwinds", "color": "#34d399"},
+    "synthesizer": {"ko": "신디사이저", "en": "Synthesizer", "color": "#f472b6"},
     "other": {"ko": "기타 악기", "en": "Other", "color": "#64748b"},
 }
 
-# 10스템에서 하위 스템 계층 구조 (UI 트리 표시용)
+# 하위 스템 계층 구조 (UI 트리 표시용)
 STEM_HIERARCHY = {
     "lead_vocals": {"parent": "vocals", "group": "vocals"},
     "backing_vocals": {"parent": "vocals", "group": "vocals"},
@@ -96,6 +114,10 @@ STEM_HIERARCHY = {
     "snare": {"parent": "drums", "group": "drums"},
     "toms": {"parent": "drums", "group": "drums"},
     "cymbals": {"parent": "drums", "group": "drums"},
+    "strings": {"parent": "other", "group": "banquet"},
+    "brass": {"parent": "other", "group": "banquet"},
+    "woodwinds": {"parent": "other", "group": "banquet"},
+    "synthesizer": {"parent": "other", "group": "banquet"},
 }
 
 BS_ROFORMER_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
@@ -109,6 +131,8 @@ class DemucsService:
         self.cuda_available = False
         self.librosa_available = False
         self.audio_separator_available = False
+        self.banquet_available = False
+        self._banquet_service = None
 
         # Demucs 확인
         try:
@@ -139,6 +163,16 @@ class DemucsService:
             self.librosa_available = True
         except ImportError:
             pass
+
+        # Banquet 확인
+        try:
+            from banquet_service import BanquetService
+            self._banquet_service = BanquetService()
+            self.banquet_available = self._banquet_service.available
+            if self.banquet_available:
+                logger.info("Banquet 쿼리 기반 분리 사용 가능")
+        except Exception as e:
+            logger.warning("Banquet 초기화 실패: %s", e)
 
     def get_audio_duration(self, audio_path: str) -> float:
         """오디오 길이 반환 (초) — librosa.get_duration 우선, fallback으로 pydub"""
@@ -179,7 +213,9 @@ class DemucsService:
 
         engine = model_info.get("engine", "demucs")
 
-        if engine == "chained_10s":
+        if engine == "chained_banquet":
+            return self._separate_chained_banquet(audio_path, model, output_dir, mp3_output, progress_cb)
+        elif engine == "chained_10s":
             return self._separate_chained_10s(audio_path, model, output_dir, mp3_output, progress_cb)
         elif engine == "chained":
             return self._separate_chained(audio_path, model, output_dir, mp3_output, progress_cb)
@@ -500,6 +536,213 @@ class DemucsService:
                 logger.info("  cymbals (hh+ride+crash 합산): %s", cymbals_path)
 
             logger.info("  Pass 4 완료")
+
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+        return stems
+
+    # ──────────────────────────────────────────
+    # Engine: Chained Banquet (14스템)
+    # ──────────────────────────────────────────
+
+    def _separate_chained_banquet(
+        self, audio_path, model, output_dir, mp3_output, progress_cb
+    ) -> Dict[str, str]:
+        """
+        5-Pass 체이닝 파이프라인 (14스템):
+          Pass 1: BS-RoFormer → Vocals / Instrumental
+          Pass 2: Demucs 6s → Instrumental → drums, bass, guitar, piano, other
+          Pass 3: MelBand-RoFormer Karaoke → Vocals → Lead/Backing Vocals
+          Pass 4: MDX23C DrumSep → Drums → kick, snare, toms, cymbals
+          Pass 5: Banquet → Other → strings, brass, woodwinds, synthesizer
+        """
+        if not self.audio_separator_available:
+            raise Exception(
+                "audio-separator가 설치되지 않았습니다. pip install audio-separator[gpu]"
+            )
+        if not self.banquet_available:
+            raise Exception(
+                "Banquet 모델이 사용 불가능합니다. "
+                "체크포인트를 다운로드하세요: https://zenodo.org/records/13694558"
+            )
+
+        if not os.path.exists(audio_path):
+            raise Exception(f"파일을 찾을 수 없습니다: {audio_path}")
+
+        if output_dir is None:
+            output_dir = tempfile.mkdtemp(prefix="banquet14_")
+        os.makedirs(output_dir, exist_ok=True)
+
+        from audio_separator.separator import Separator
+
+        work_dir = tempfile.mkdtemp(prefix="banquet14_work_")
+        stems: Dict[str, str] = {}
+        ext = ".mp3" if mp3_output else ".wav"
+
+        try:
+            # ═══ Pass 1/5: BS-RoFormer 보컬/반주 분리 ═══
+            if progress_cb:
+                progress_cb("Pass 1/5: BS-RoFormer 보컬 분리 (최고 품질)...")
+            logger.info("Pass 1/5: BS-RoFormer 보컬/반주 분리")
+
+            pass1_dir = os.path.join(work_dir, "pass1")
+            os.makedirs(pass1_dir)
+            sep = Separator(output_dir=pass1_dir)
+            sep.load_model(BS_ROFORMER_MODEL)
+            pass1_results = sep.separate(audio_path)
+
+            vocal_wav = None
+            instrumental_wav = None
+            for f in pass1_results:
+                full = os.path.join(pass1_dir, f)
+                if "Vocal" in f:
+                    vocal_wav = full
+                elif "Instrumental" in f:
+                    instrumental_wav = full
+
+            if not vocal_wav or not instrumental_wav:
+                raise Exception("Pass 1 실패: Vocals/Instrumental 파일 없음")
+            logger.info("  Pass 1 완료")
+
+            # ═══ Pass 2/5: Demucs 6s 반주 분리 ═══
+            if progress_cb:
+                progress_cb("Pass 2/5: Demucs 6s 반주 분리...")
+            logger.info("Pass 2/5: Demucs 6s 반주 분리")
+
+            pass2_dir = os.path.join(work_dir, "pass2")
+            os.makedirs(pass2_dir)
+            sep2 = Separator(output_dir=pass2_dir)
+            sep2.load_model("htdemucs_6s.yaml")
+            pass2_results = sep2.separate(instrumental_wav)
+
+            drums_wav = None
+            other_wav = None
+            stem_map_p2 = {
+                "Drums": "drums", "Bass": "bass", "Guitar": "guitar",
+                "Piano": "piano", "Other": "other", "Vocals": "_skip",
+            }
+
+            for f in pass2_results:
+                full = os.path.join(pass2_dir, f)
+                for key, stem_name in stem_map_p2.items():
+                    if f"({key})" in f:
+                        if stem_name == "drums":
+                            drums_wav = full
+                        elif stem_name == "other":
+                            other_wav = full
+                        elif stem_name != "_skip":
+                            final_path = os.path.join(output_dir, f"{stem_name}{ext}")
+                            self._convert_audio(full, final_path, mp3_output)
+                            stems[stem_name] = final_path
+                            logger.info("  %s: %s", stem_name, final_path)
+                        break
+
+            if not drums_wav:
+                raise Exception("Pass 2 실패: Drums 파일 없음")
+            if not other_wav:
+                raise Exception("Pass 2 실패: Other 파일 없음")
+            logger.info("  Pass 2 완료")
+
+            # ═══ Pass 3/5: MelBand-RoFormer 보컬 세분화 ═══
+            if progress_cb:
+                progress_cb("Pass 3/5: MelBand-RoFormer 보컬 세분화 (Lead/Backing)...")
+            logger.info("Pass 3/5: MelBand-RoFormer 보컬 세분화")
+
+            pass3_dir = os.path.join(work_dir, "pass3")
+            os.makedirs(pass3_dir)
+            sep3 = Separator(output_dir=pass3_dir)
+            sep3.load_model(MELBAND_KARAOKE_MODEL)
+            pass3_results = sep3.separate(vocal_wav)
+
+            mel_tag = "mel_band_roformer_karaoke"
+            for f in pass3_results:
+                full = os.path.join(pass3_dir, f)
+                if f"(Instrumental)_{mel_tag}" in f:
+                    final_path = os.path.join(output_dir, f"backing_vocals{ext}")
+                    self._convert_audio(full, final_path, mp3_output)
+                    stems["backing_vocals"] = final_path
+                    logger.info("  backing_vocals: %s", final_path)
+                elif f"(Vocals)_{mel_tag}" in f:
+                    final_path = os.path.join(output_dir, f"lead_vocals{ext}")
+                    self._convert_audio(full, final_path, mp3_output)
+                    stems["lead_vocals"] = final_path
+                    logger.info("  lead_vocals: %s", final_path)
+
+            logger.info("  Pass 3 완료")
+
+            # ═══ Pass 4/5: DrumSep 드럼 세분화 ═══
+            if progress_cb:
+                progress_cb("Pass 4/5: DrumSep 드럼 세분화 (Kick/Snare/Toms/Cymbals)...")
+            logger.info("Pass 4/5: DrumSep 드럼 세분화")
+
+            pass4_dir = os.path.join(work_dir, "pass4")
+            os.makedirs(pass4_dir)
+            sep4 = Separator(output_dir=pass4_dir)
+            sep4.load_model(DRUMSEP_MODEL)
+            pass4_results = sep4.separate(drums_wav)
+
+            cymbal_parts = []
+            drum_stem_map = {
+                "kick": "kick", "snare": "snare", "toms": "toms",
+            }
+            cymbal_stems = ["hh", "ride", "crash"]
+
+            for f in pass4_results:
+                full = os.path.join(pass4_dir, f)
+                matched = False
+                for key, stem_name in drum_stem_map.items():
+                    if f"({key})" in f:
+                        final_path = os.path.join(output_dir, f"{stem_name}{ext}")
+                        self._convert_audio(full, final_path, mp3_output)
+                        stems[stem_name] = final_path
+                        logger.info("  %s: %s", stem_name, final_path)
+                        matched = True
+                        break
+                if not matched:
+                    for cs in cymbal_stems:
+                        if f"({cs})" in f:
+                            cymbal_parts.append(full)
+                            break
+
+            if cymbal_parts:
+                cymbals_path = os.path.join(output_dir, f"cymbals{ext}")
+                self._merge_audio_files(cymbal_parts, cymbals_path, mp3_output)
+                stems["cymbals"] = cymbals_path
+                logger.info("  cymbals (hh+ride+crash 합산): %s", cymbals_path)
+
+            logger.info("  Pass 4 완료")
+
+            # ═══ Pass 5/5: Banquet 쿼리 기반 롱테일 악기 분리 ═══
+            if progress_cb:
+                progress_cb("Pass 5/5: Banquet 쿼리 분리 (현악기/금관/목관/신스)...")
+            logger.info("Pass 5/5: Banquet 쿼리 기반 분리 시작 (Other → 4개 악기)")
+
+            query_map = self._banquet_service.get_default_queries()
+            if not query_map:
+                logger.warning("Banquet 쿼리 파일 없음 — Pass 5 생략, Other 유지")
+                other_final = os.path.join(output_dir, f"other{ext}")
+                self._convert_audio(other_wav, other_final, mp3_output)
+                stems["other"] = other_final
+            else:
+                pass5_dir = os.path.join(work_dir, "pass5")
+                os.makedirs(pass5_dir)
+
+                banquet_results = self._banquet_service.separate_multi(
+                    other_wav, query_map, pass5_dir, progress_cb
+                )
+
+                for bq_stem, bq_path in banquet_results.items():
+                    final_path = os.path.join(output_dir, f"{bq_stem}{ext}")
+                    self._convert_audio(bq_path, final_path, mp3_output)
+                    stems[bq_stem] = final_path
+                    logger.info("  %s: %s", bq_stem, final_path)
+
+                other_final = os.path.join(output_dir, f"other{ext}")
+                self._convert_audio(other_wav, other_final, mp3_output)
+                stems["other"] = other_final
+
+            logger.info("  Pass 5 완료 — 총 %d개 스템", len(stems))
 
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)

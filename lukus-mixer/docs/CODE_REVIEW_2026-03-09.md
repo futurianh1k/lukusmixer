@@ -340,16 +340,32 @@ python -m pytest tests/ -v
 
 ---
 
-## 9. 총평
+## 9. Phase 3: Banquet 14스템 (2026-03-09)
 
-Phase 2까지의 **AI 파이프라인과 핵심 기능 구현은 양호**.  
-4-Pass 체이닝, 한국어 프롬프트 파싱, 스펙트로그램 인터랙션 등 독창적인 기능이 잘 갖춰져 있음.  
-문서화(ROADMAP, CHANGELOG)도 규칙을 따르고 있어 이력 관리에 적합.
+| 태스크 | 분류 | 상태 |
+|--------|------|------|
+| query-bandit 리포 클론 및 환경 구축 | 인프라 | ✅ 완료 |
+| Banquet 추론 파이프라인 래핑 (banquet_service.py) | 백엔드 | ✅ 완료 |
+| 레퍼런스 쿼리 오디오 수집 (합성 4종) | 데이터 | ✅ 완료 |
+| Pass 5 구현: Other → Banquet → 4개 악기 | 백엔드 | ✅ 완료 |
+| 14스템 모델 옵션 (banquet_14s) 등록 | 백엔드 | ✅ 완료 |
+| 프론트엔드 UI (Banquet 그룹, STEM_CONFIG 확장) | 프론트 | ✅ 완료 |
+| 프롬프트 파서 키워드 확장 (14개 한글 키워드) | 백엔드 | ✅ 완료 |
+| Banquet 테스트 26개 추가 (총 105개) | 테스트 | ✅ 완료 |
+| 사용자 커스텀 쿼리 업로드 기능 | UX | ⏳ 추후 |
 
-P0 보안 항목(CORS, 업로드 보안, 경로 순회, 에러 은닉)은 **본 리뷰에서 모두 수정 완료**.  
-테스트 코드 64개를 새로 작성하여 핵심 로직(프롬프트 파서, 보안 유틸, 믹싱)의 회귀 방지 체계를 마련.
+---
 
-다음 단계로 P1 항목(logging, SQLite 영속화, 파일 정리, 모델 동적 로드) 진행을 권장.
+## 10. 총평
+
+Phase 3까지의 **AI 파이프라인 완성도가 높음**.  
+5-Pass 체이닝(BS-RoFormer → Demucs → MelBand → DrumSep → Banquet)으로
+단일 오디오에서 14개 악기 스템을 분리하는 체계를 구축.
+
+Banquet 쿼리 기반 접근법으로 **사전 정의되지 않은 악기도 분리 가능**한
+유연한 아키텍처를 달성. 합성 쿼리 오디오를 실제 녹음으로 교체하면 품질이 향상될 여지가 있음.
+
+테스트 코드 105개로 회귀 방지 체계가 견고하며, ROADMAP/CHANGELOG 문서도 잘 관리되고 있음.
 
 ---
 
@@ -362,4 +378,7 @@ P0 보안 항목(CORS, 업로드 보안, 경로 순회, 에러 은닉)은 **본 
 | Demucs v4 | https://github.com/facebookresearch/demucs (MIT) |
 | MelBand-RoFormer Karaoke | aufr33 & viperx (python-audio-separator 내장) |
 | MDX23C DrumSep | aufr33 & jarredou |
+| **Banquet (query-bandit)** | **https://github.com/kwatcharasupat/query-bandit (MIT, ISMIR 2024)** |
+| **PaSST** | **https://github.com/kkoutini/PaSST (Apache-2.0)** |
+| **모델 가중치 (ev-pre-aug.ckpt)** | **https://zenodo.org/records/13694558** |
 | 파일 시그니처 참고 | https://en.wikipedia.org/wiki/List_of_file_signatures |
