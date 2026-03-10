@@ -1062,6 +1062,399 @@ async def add_to_library(data: dict):
 
 
 # ──────────────────────────────────────────────
+# Custom Query (Banquet 확장)
+# 사용자가 직접 쿼리 오디오를 업로드하여 원하는 악기 분리
+# ──────────────────────────────────────────────
+
+CUSTOM_QUERY_DIR = OUTPUT_DIR / "custom_queries"
+CUSTOM_QUERY_DIR.mkdir(exist_ok=True)
+
+# 쿼리 오디오 업로드 제한
+MAX_QUERY_SIZE = int(os.environ.get("MAX_QUERY_SIZE", 20 * 1024 * 1024))  # 20MB
+MAX_QUERY_DURATION = 30.0  # 최대 30초
+
+
+class CustomQueryRequest(BaseModel):
+    name: str
+    description: str = ""
+    color: str = "#94a3b8"
+
+
+class CustomSplitRequest(BaseModel):
+    """커스텀 쿼리 기반 분리 요청"""
+    query_ids: List[str]  # 사용할 커스텀 쿼리 ID 목록
+
+
+@app.post("/api/custom-queries/upload")
+async def upload_custom_query(
+    file: UploadFile = File(...),
+    name: str = "",
+    description: str = "",
+    color: str = "#94a3b8",
+):
+    """커스텀 쿼리 오디오 업로드
+    
+    사용자가 원하는 악기/소리의 레퍼런스 오디오를 업로드합니다.
+    10-30초 길이의 WAV/MP3 파일을 권장합니다.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="파일명이 없습니다")
+
+    # 확장자 검증
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 형식입니다. 지원: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
+
+    # MIME 타입 검증
+    allowed_mimes = {
+        "audio/mpeg", "audio/wav", "audio/x-wav", "audio/wave",
+        "audio/flac", "audio/x-flac", "audio/ogg",
+        "audio/mp4", "audio/x-m4a", "audio/aac",
+        "application/octet-stream",
+    }
+    if file.content_type and file.content_type not in allowed_mimes:
+        raise HTTPException(status_code=400, detail="허용되지 않는 MIME 타입입니다")
+
+    # 파일 크기 제한
+    chunks = []
+    total_size = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > MAX_QUERY_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"파일이 너무 큽니다. 쿼리 오디오는 최대 {MAX_QUERY_SIZE // (1024*1024)}MB까지 허용됩니다",
+            )
+        chunks.append(chunk)
+
+    content = b"".join(chunks)
+
+    if total_size == 0:
+        raise HTTPException(status_code=400, detail="빈 파일입니다")
+
+    # Magic number 검증
+    if not _validate_audio_magic(content[:16], ext):
+        raise HTTPException(
+            status_code=400,
+            detail="파일 내용이 확장자와 일치하지 않습니다. 유효한 오디오 파일인지 확인해주세요.",
+        )
+
+    # 파일 저장
+    query_id = str(uuid.uuid4())
+    query_dir = CUSTOM_QUERY_DIR / query_id
+    query_dir.mkdir(exist_ok=True)
+
+    # 항상 WAV로 저장 (Banquet 호환성)
+    file_path = query_dir / "query.wav"
+    temp_path = query_dir / f"temp{ext}"
+
+    with open(temp_path, "wb") as f:
+        f.write(content)
+
+    # 오디오 길이 확인 및 WAV 변환
+    duration = demucs_service.get_audio_duration(str(temp_path))
+
+    if duration and duration > MAX_QUERY_DURATION:
+        temp_path.unlink()
+        query_dir.rmdir()
+        raise HTTPException(
+            status_code=400,
+            detail=f"쿼리 오디오가 너무 깁니다. 최대 {MAX_QUERY_DURATION}초까지 허용됩니다. (현재: {duration:.1f}초)",
+        )
+
+    if duration and duration < 1.0:
+        temp_path.unlink()
+        query_dir.rmdir()
+        raise HTTPException(
+            status_code=400,
+            detail="쿼리 오디오가 너무 짧습니다. 최소 1초 이상이어야 합니다.",
+        )
+
+    # WAV 변환 (이미 WAV인 경우 복사)
+    if ext != ".wav":
+        try:
+            from pydub import AudioSegment
+            audio = AudioSegment.from_file(str(temp_path))
+            audio.export(str(file_path), format="wav")
+            temp_path.unlink()
+        except Exception as e:
+            temp_path.unlink()
+            query_dir.rmdir()
+            logger.error("쿼리 WAV 변환 실패: %s", e)
+            raise HTTPException(status_code=500, detail="오디오 변환 중 오류가 발생했습니다")
+    else:
+        temp_path.rename(file_path)
+
+    # 쿼리명 설정
+    query_name = name.strip() if name.strip() else Path(file.filename).stem
+
+    # DB에 저장
+    query = job_store.create_custom_query(
+        query_id=query_id,
+        name=query_name,
+        file_path=str(file_path),
+        description=description,
+        color=color,
+        duration=duration,
+    )
+
+    logger.info("커스텀 쿼리 업로드: %s (%s, %.1fs)", query_name, query_id, duration or 0)
+
+    return {
+        "query_id": query_id,
+        "name": query_name,
+        "description": description,
+        "color": color,
+        "duration": duration,
+        "message": f"쿼리 '{query_name}' 업로드 완료",
+    }
+
+
+@app.get("/api/custom-queries")
+async def list_custom_queries():
+    """커스텀 쿼리 목록 조회"""
+    queries = job_store.list_custom_queries()
+    return {"queries": queries}
+
+
+@app.get("/api/custom-queries/{query_id}")
+async def get_custom_query(query_id: str):
+    """단일 커스텀 쿼리 조회"""
+    query = job_store.get_custom_query(query_id)
+    if not query:
+        raise HTTPException(status_code=404, detail="쿼리를 찾을 수 없습니다")
+    return query
+
+
+@app.patch("/api/custom-queries/{query_id}")
+async def update_custom_query(query_id: str, data: dict):
+    """커스텀 쿼리 업데이트 (이름, 설명, 색상)"""
+    query = job_store.get_custom_query(query_id)
+    if not query:
+        raise HTTPException(status_code=404, detail="쿼리를 찾을 수 없습니다")
+
+    allowed = {"name", "description", "color"}
+    updates = {k: v for k, v in data.items() if k in allowed and v is not None}
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="업데이트할 항목이 없습니다")
+
+    job_store.update_custom_query(query_id, **updates)
+    updated = job_store.get_custom_query(query_id)
+    return {"query": updated, "message": "업데이트 완료"}
+
+
+@app.delete("/api/custom-queries/{query_id}")
+async def delete_custom_query(query_id: str):
+    """커스텀 쿼리 삭제"""
+    query = job_store.get_custom_query(query_id)
+    if not query:
+        raise HTTPException(status_code=404, detail="쿼리를 찾을 수 없습니다")
+
+    # 파일 삭제
+    file_path = Path(query["file_path"])
+    if file_path.exists():
+        try:
+            file_path.unlink()
+            if file_path.parent.exists() and not any(file_path.parent.iterdir()):
+                file_path.parent.rmdir()
+        except OSError as e:
+            logger.warning("쿼리 파일 삭제 실패: %s", e)
+
+    job_store.delete_custom_query(query_id)
+    return {"message": f"쿼리 '{query['name']}' 삭제됨"}
+
+
+@app.get("/api/custom-queries/{query_id}/stream")
+async def stream_custom_query(query_id: str):
+    """커스텀 쿼리 오디오 스트리밍 (미리듣기용)"""
+    query = job_store.get_custom_query(query_id)
+    if not query:
+        raise HTTPException(status_code=404, detail="쿼리를 찾을 수 없습니다")
+
+    file_path = Path(query["file_path"])
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="쿼리 파일이 존재하지 않습니다")
+
+    return FileResponse(str(file_path), media_type="audio/wav")
+
+
+@app.post("/api/split-custom/{file_id}")
+async def split_with_custom_queries(
+    file_id: str,
+    request: CustomSplitRequest,
+    background_tasks: BackgroundTasks,
+):
+    """커스텀 쿼리를 사용한 분리 작업 시작
+    
+    사용자가 업로드한 커스텀 쿼리 오디오를 기반으로
+    원하는 악기/소리를 분리합니다.
+    """
+    if not demucs_service.banquet_available:
+        raise HTTPException(
+            status_code=503,
+            detail="Banquet 모델이 사용 불가능합니다. 체크포인트를 확인해주세요.",
+        )
+
+    if not request.query_ids:
+        raise HTTPException(status_code=400, detail="쿼리를 선택해주세요")
+
+    _sanitize_filename(file_id)
+    file_dir = _safe_resolve(OUTPUT_DIR, file_id)
+
+    # 원본 파일 찾기
+    original_file = None
+    for ext in [".mp3", ".wav", ".flac", ".ogg", ".m4a"]:
+        candidate = file_dir / f"original{ext}"
+        if candidate.exists():
+            original_file = candidate
+            break
+
+    if not original_file:
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
+
+    # 쿼리 검증
+    query_map = {}
+    for qid in request.query_ids:
+        query = job_store.get_custom_query(qid)
+        if not query:
+            raise HTTPException(status_code=404, detail=f"쿼리를 찾을 수 없습니다: {qid}")
+        if not Path(query["file_path"]).exists():
+            raise HTTPException(status_code=404, detail=f"쿼리 파일이 없습니다: {query['name']}")
+        query_map[query["name"]] = {
+            "query_id": qid,
+            "path": query["file_path"],
+            "color": query.get("color", "#94a3b8"),
+        }
+
+    # 작업 생성
+    job_id = str(uuid.uuid4())
+    stem_names = list(query_map.keys())
+    job_store.create_job(
+        job_id=job_id,
+        file_id=file_id,
+        model="custom_banquet",
+        stems=stem_names,
+        original_filename=original_file.name,
+    )
+
+    # 백그라운드 작업 시작
+    background_tasks.add_task(
+        process_custom_split_job,
+        job_id,
+        str(original_file),
+        query_map,
+    )
+
+    return {"job_id": job_id, "status": "pending", "stems": stem_names}
+
+
+async def process_custom_split_job(
+    job_id: str,
+    audio_path: str,
+    query_map: Dict[str, dict],
+):
+    """커스텀 쿼리 기반 분리 백그라운드 작업"""
+    _update_job(job_id, status="pending", progress=5,
+                message=f"대기 중 (동시 처리 제한: {MAX_CONCURRENT_SPLITS})...",
+                log="GPU 큐 대기 중...")
+
+    async with _gpu_semaphore:
+        await _process_custom_split_inner(job_id, audio_path, query_map)
+
+
+async def _process_custom_split_inner(
+    job_id: str,
+    audio_path: str,
+    query_map: Dict[str, dict],
+):
+    """커스텀 쿼리 분리 실제 로직"""
+    from banquet_service import BanquetService
+
+    try:
+        _update_job(job_id, status="processing", progress=10,
+                    message="커스텀 쿼리 분리 시작...",
+                    log=f"Banquet 커스텀 분리 시작 ({len(query_map)}개 쿼리)")
+
+        output_dir = Path(audio_path).parent / "custom_stems"
+        output_dir.mkdir(exist_ok=True)
+
+        # Banquet 서비스 인스턴스
+        banquet = BanquetService()
+
+        results = {}
+        total = len(query_map)
+
+        for i, (stem_name, info) in enumerate(query_map.items(), 1):
+            progress = 10 + int(70 * i / total)
+            _update_job(job_id, progress=progress,
+                        message=f"분리 중... ({i}/{total}): {stem_name}",
+                        log=f"[{i}/{total}] {stem_name} 분리 중...")
+
+            try:
+                output_path = str(output_dir / f"{stem_name}.wav")
+                await asyncio.to_thread(
+                    banquet.separate_one,
+                    audio_path,
+                    info["path"],
+                    output_path,
+                    stem_name,
+                )
+
+                # MP3 변환
+                mp3_path = str(output_dir / f"{stem_name}.mp3")
+                from pydub import AudioSegment
+                audio = AudioSegment.from_file(output_path)
+                audio.export(mp3_path, format="mp3", bitrate="320k")
+                Path(output_path).unlink()  # WAV 삭제
+
+                dur = demucs_service.get_audio_duration(mp3_path)
+                results[stem_name] = {
+                    "name": stem_name,
+                    "path": mp3_path,
+                    "duration": dur,
+                    "color": info.get("color", "#94a3b8"),
+                    "query_id": info["query_id"],
+                }
+                _update_job(job_id, log=f"✓ {stem_name} 분리 완료")
+
+            except Exception as e:
+                logger.error("커스텀 스템 %s 분리 실패: %s", stem_name, e)
+                _update_job(job_id, log=f"✗ {stem_name} 실패: {type(e).__name__}")
+
+        # 스펙트로그램 생성
+        _update_job(job_id, progress=85, message="스펙트로그램 생성 중...",
+                    log="스펙트로그램 생성 시작...")
+
+        for stem_name, info in results.items():
+            spec_path = Path(info["path"]).parent / f"{stem_name}_spectrogram.png"
+            try:
+                await asyncio.to_thread(
+                    generate_spectrogram_image, info["path"], str(spec_path), stem_name
+                )
+                info["spectrogram"] = str(spec_path)
+            except Exception as e:
+                logger.warning("%s 스펙트로그램 실패: %s", stem_name, e)
+
+        _update_job(job_id, status="completed", progress=100,
+                    message=f"완료! {len(results)}개 스템 분리됨",
+                    result=results,
+                    log=f"✅ 커스텀 분리 완료 ({len(results)}개 스템)")
+
+    except Exception as e:
+        logger.error("커스텀 분리 실패 (job_id=%s): %s", job_id, e)
+        _update_job(job_id, status="failed", progress=0,
+                    message="처리 중 오류가 발생했습니다. 다시 시도해주세요.",
+                    log=f"❌ 오류 발생: {type(e).__name__}")
+
+
+# ──────────────────────────────────────────────
 # Prompt History
 # ──────────────────────────────────────────────
 

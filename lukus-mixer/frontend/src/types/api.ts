@@ -82,3 +82,73 @@ export interface WsJobUpdate {
   result: Record<string, StemResult> | null;
   logs: string[] | null;
 }
+
+// ───────────────────────────────────────────────
+// Custom Query (Banquet 확장)
+// ───────────────────────────────────────────────
+
+export interface CustomQuery {
+  query_id: string;
+  name: string;
+  description: string;
+  file_path: string;
+  color: string;
+  duration: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomQueryUploadResponse {
+  query_id: string;
+  name: string;
+  description: string;
+  color: string;
+  duration: number | null;
+  message: string;
+}
+
+export interface CustomQueryListResponse {
+  queries: CustomQuery[];
+}
+
+export interface CustomSplitRequest {
+  query_ids: string[];
+}
+
+export interface CustomSplitResponse {
+  job_id: string;
+  status: string;
+  stems: string[];
+}
+
+export interface CustomStemResult extends StemResult {
+  color: string;
+  query_id: string;
+}
+
+// CustomQueryManager 컴포넌트 Props
+export interface CustomQueryManagerProps {
+  onQuerySelect: (queryIds: string[]) => void;
+  selectedQueryIds: string[];
+  disabled?: boolean;
+}
+
+// CustomQueryUpload 컴포넌트 Props  
+export interface CustomQueryUploadProps {
+  onUploadComplete: (query: CustomQuery) => void;
+  disabled?: boolean;
+}
+
+// 쿼리 색상 프리셋
+export const QUERY_COLOR_PRESETS = [
+  '#22c55e', // green
+  '#f97316', // orange
+  '#8b5cf6', // violet
+  '#06b6d4', // cyan
+  '#ec4899', // pink
+  '#eab308', // yellow
+  '#3b82f6', // blue
+  '#ef4444', // red
+  '#a78bfa', // purple
+  '#14b8a6', // teal
+] as const;

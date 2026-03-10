@@ -68,8 +68,20 @@ class JobStore:
                 created_at   TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS custom_queries (
+                query_id     TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                description  TEXT,
+                file_path    TEXT NOT NULL,
+                color        TEXT DEFAULT '#94a3b8',
+                duration     REAL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
             CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_custom_queries_created ON custom_queries(created_at);
         """)
         conn.commit()
 
@@ -224,6 +236,82 @@ class JobStore:
             "SELECT data_json FROM library_items ORDER BY created_at DESC"
         ).fetchall()
         return [json.loads(r["data_json"]) for r in rows]
+
+    # ── Custom Query CRUD ─────────────────────
+
+    def create_custom_query(
+        self,
+        query_id: str,
+        name: str,
+        file_path: str,
+        description: str = "",
+        color: str = "#94a3b8",
+        duration: Optional[float] = None,
+    ) -> dict:
+        """커스텀 쿼리 생성"""
+        now = datetime.now().isoformat()
+        query = {
+            "query_id": query_id,
+            "name": name,
+            "description": description,
+            "file_path": file_path,
+            "color": color,
+            "duration": duration,
+            "created_at": now,
+            "updated_at": now,
+        }
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO custom_queries "
+            "(query_id, name, description, file_path, color, duration, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (query_id, name, description, file_path, color, duration, now, now),
+        )
+        conn.commit()
+        logger.info("커스텀 쿼리 생성: %s (%s)", name, query_id)
+        return query
+
+    def get_custom_query(self, query_id: str) -> Optional[dict]:
+        """단일 커스텀 쿼리 조회"""
+        row = self._conn().execute(
+            "SELECT * FROM custom_queries WHERE query_id=?", (query_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_custom_queries(self) -> List[dict]:
+        """모든 커스텀 쿼리 목록 조회"""
+        rows = self._conn().execute(
+            "SELECT * FROM custom_queries ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_custom_query(self, query_id: str, **kwargs) -> bool:
+        """커스텀 쿼리 업데이트"""
+        conn = self._conn()
+        now = datetime.now().isoformat()
+
+        allowed = {"name", "description", "color", "duration"}
+        sets = ["updated_at=?"]
+        params: list = [now]
+
+        for key, val in kwargs.items():
+            if key in allowed:
+                sets.append(f"{key}=?")
+                params.append(val)
+
+        params.append(query_id)
+        cur = conn.execute(
+            f"UPDATE custom_queries SET {', '.join(sets)} WHERE query_id=?", params
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+    def delete_custom_query(self, query_id: str) -> bool:
+        """커스텀 쿼리 삭제"""
+        conn = self._conn()
+        cur = conn.execute("DELETE FROM custom_queries WHERE query_id=?", (query_id,))
+        conn.commit()
+        return cur.rowcount > 0
 
     # ── 정리 ──────────────────────────────────
 

@@ -7,8 +7,10 @@ import StemSelector from './components/StemSelector';
 import ResultPanel from './components/ResultPanel';
 import MixingPanel from './components/MixingPanel';
 import AudioPlayer from './components/AudioPlayer';
+import CustomQueryManager from './components/CustomQueryManager';
 import useJobWebSocket from './hooks/useJobWebSocket';
 import axios from 'axios';
+import { Sparkles } from 'lucide-react';
 
 const API_BASE = '/api';
 
@@ -28,6 +30,11 @@ function App() {
   const [promptAppend, setPromptAppend] = useState(null);
   const [expandedMix, setExpandedMix] = useState(null);
   const appendIdRef = useRef(0);
+
+  // 커스텀 쿼리 관련 상태
+  const [useCustomQuery, setUseCustomQuery] = useState(false);
+  const [selectedQueryIds, setSelectedQueryIds] = useState([]);
+  const [banquetAvailable, setBanquetAvailable] = useState(false);
 
   const handleAppendPrompt = useCallback((text) => {
     appendIdRef.current += 1;
@@ -49,6 +56,8 @@ function App() {
         if (serverModels.length > 0) {
           setModels(serverModels);
         }
+        // Banquet 사용 가능 여부 저장
+        setBanquetAvailable(res.data.banquet_available || false);
       } catch (err) {
         console.error('모델 목록 로드 실패, 폴백 사용:', err);
       }
@@ -108,10 +117,21 @@ function App() {
     setResults(null);
 
     try {
-      const response = await axios.post(`${API_BASE}/split/${uploadedFile.file_id}`, {
-        stems: selectedStems,
-        model: selectedModel
-      });
+      let response;
+      
+      if (useCustomQuery && selectedQueryIds.length > 0) {
+        // 커스텀 쿼리 기반 분리
+        response = await axios.post(`${API_BASE}/split-custom/${uploadedFile.file_id}`, {
+          query_ids: selectedQueryIds,
+        });
+        toast.success(`커스텀 쿼리 분리 시작 (${selectedQueryIds.length}개 쿼리)`);
+      } else {
+        // 일반 모델 기반 분리
+        response = await axios.post(`${API_BASE}/split/${uploadedFile.file_id}`, {
+          stems: selectedStems,
+          model: selectedModel
+        });
+      }
       
       setJobId(response.data.job_id);
     } catch (error) {
@@ -252,6 +272,39 @@ function App() {
         />
       </div>
 
+      {/* 커스텀 쿼리 모드 */}
+      {banquetAvailable && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-dark-300 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-violet-400" />
+              Custom Query Mode
+            </h3>
+            <button
+              onClick={() => setUseCustomQuery(!useCustomQuery)}
+              className={`relative w-11 h-6 rounded-full transition-colors ${
+                useCustomQuery ? 'bg-violet-500' : 'bg-dark-700'
+              }`}
+            >
+              <span
+                className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                  useCustomQuery ? 'translate-x-5' : ''
+                }`}
+              />
+            </button>
+          </div>
+          
+          {useCustomQuery && (
+            <CustomQueryManager
+              onQuerySelect={setSelectedQueryIds}
+              selectedQueryIds={selectedQueryIds}
+              disabled={isProcessing}
+              banquetAvailable={banquetAvailable}
+            />
+          )}
+        </div>
+      )}
+
       {jobStatus && isProcessing && (
         <div className="mb-6">
           <div className="flex justify-between text-sm mb-2">
@@ -278,10 +331,19 @@ function App() {
 
       <button
         onClick={handleSplit}
-        disabled={!uploadedFile || isProcessing}
-        className="btn-primary w-full"
+        disabled={!uploadedFile || isProcessing || (useCustomQuery && selectedQueryIds.length === 0)}
+        className={`w-full py-3 px-4 rounded-xl font-medium transition-all ${
+          useCustomQuery
+            ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white disabled:opacity-50'
+            : 'btn-primary'
+        }`}
       >
-        {isProcessing ? '처리 중...' : 'Split Stems'}
+        {isProcessing 
+          ? '처리 중...' 
+          : useCustomQuery 
+            ? `커스텀 분리 (${selectedQueryIds.length}개 쿼리)`
+            : 'Split Stems'
+        }
       </button>
     </div>
   );
